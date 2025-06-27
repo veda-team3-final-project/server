@@ -1,5 +1,5 @@
 // RTSP 송수신 모듈 of 서버 Pi 
-// 엣지 디바이스 Pi로부터 영상 수신, 클라이언트 Pi로 영상 송신
+// 엣지 디바이스 Pi로부터 영상 수신, 클라이언트 Windows로 영상 송신
 // 이 코드의 RTSP 서버 주소 : rtsp://<ip주소>:8554/retransmit
 
 #include "rtsp_server.hpp"
