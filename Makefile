@@ -7,11 +7,14 @@ all: server
 clean:
 	rm -f *.o server
 
-server: server.o rtsp_server.o
-	$(CXX) server.o rtsp_server.o -o server $(LDFLAGS)
+server: server.o rtsp_server.o tcp_server.o
+	$(CXX) server.o rtsp_server.o tcp_server.o -o server $(LDFLAGS) -pthread
 
 server.o: server.cpp
 	$(CXX) -c server.cpp $(CXXFLAGS)
 
 rtsp_server.o: rtsp_server.cpp
 	$(CXX) -c rtsp_server.cpp $(CXXFLAGS)
+
+tcp_server.o: tcp_server.cpp
+	$(CXX) -c tcp_server.cpp
