@@ -1,4 +1,4 @@
-// SQLite DB 관리 모듈
+// SQLite DB 관리 모듈.
 
 #pragma once
 // SQLiteC++ 외부 라이브러리
