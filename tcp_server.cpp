@@ -1,6 +1,6 @@
 #include "tcp_server.hpp" // 클래스 선언이 포함된 헤더 파일 포함
 
-using namespace std;
+
 
 // 서버가 사용할 포트 번호
 const int PORT = 8080;

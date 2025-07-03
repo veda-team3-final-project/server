@@ -4,7 +4,7 @@
 
 #include "rtsp_server.hpp"
 
-using namespace std;
+
 
 void rtsp_run(int argc, char *argv[]){
     // GStreamer 초기화 (초기화 실패시 에러 발생시킴)
