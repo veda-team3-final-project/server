@@ -11,11 +11,18 @@
 
 using namespace std;
 
+struct LogData{
+    vector<unsigned char> imageBlob;
+    string timestamp;
+};
+
 void create_table(SQLite::Database& db);
 
 void insert_data(SQLite::Database& db, vector<unsigned char> image, string timestamp);
 
 void select_all_data(SQLite::Database& db);
+
+LogData select_data_for_timestamp(SQLite::Database& db, string timestamp);
 
 void delete_data(SQLite::Database& db, int id);
 

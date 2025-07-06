@@ -27,6 +27,7 @@ void insert_data(SQLite::Database& db, vector<unsigned char> image, string times
     return;
 }
 
+// 모든 데이터 출력용 select
 void select_all_data(SQLite::Database& db) {
     cout << "\n--- 모든 데이터 목록 ---" << endl;
     try {
@@ -44,6 +45,27 @@ void select_all_data(SQLite::Database& db) {
                 cout << image[i];
             }
             cout << "\n";
+        }
+    } catch (const exception& e) {
+        cerr << "사용자 조회 실패: " << e.what() << endl;
+    }
+    return;
+}
+
+LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
+    try {
+        SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp = ? ORDER BY timestamp");
+        query.bind(1, timestamp);
+        while (query.executeStep()) {
+
+            const unsigned char* ucharBlobData = static_cast<const unsigned char*>(query.getColumn("image").getBlob());
+            int blobSize = query.getColumn("image").getBytes();
+            vector<unsigned char> image(ucharBlobData,ucharBlobData+blobSize);
+
+            string timestamp = query.getColumn("timestamp");
+
+            LogData logData = {image, timestamp};
+            return logData;
         }
     } catch (const exception& e) {
         cerr << "사용자 조회 실패: " << e.what() << endl;
