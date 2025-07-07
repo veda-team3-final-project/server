@@ -25,7 +25,6 @@ struct Line {
 
 // 설정값
 constexpr float direction_threshold = 0.6f;
-
 const unordered_map<string, Line> rule_lines = {
     {"name1", {500, 100, 100, 500}},
     {"name2", {200, 250, 500, 600}}
