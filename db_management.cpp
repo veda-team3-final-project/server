@@ -53,6 +53,7 @@ void select_all_data(SQLite::Database& db) {
 }
 
 LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
+    LogData logData;
     try {
         SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp = ? ORDER BY timestamp");
         query.bind(1, timestamp);
@@ -64,13 +65,12 @@ LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
 
             string timestamp = query.getColumn("timestamp");
 
-            LogData logData = {image, timestamp};
-            return logData;
+            logData = {image, timestamp};
         }
     } catch (const exception& e) {
         cerr << "사용자 조회 실패: " << e.what() << endl;
     }
-    return;
+    return logData;
 }
 
 void delete_data(SQLite::Database& db, int id) {

@@ -18,4 +18,15 @@
 
 using namespace std;
 
+const int PORT = 8080;
+
+const int BUFFER_SIZE = 1024;
+
+struct buffer_pack{
+    char buffer[BUFFER_SIZE] = {0};
+    size_t cur_data_size = 0;
+};
+
 int tcp_run();
+
+buffer_pack buffer_process(char[],int);

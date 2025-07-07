@@ -1,18 +1,12 @@
 #include "tcp_server.hpp" 
 #include "db_management.hpp"
 
-const int PORT = 8080;
-
-const int BUFFER_SIZE = 1024;
-
 int tcp_run() {
-    SQLite::Database db("server_log.db",SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
-    cout << "데이터베이스 파일 'server_log.db'에 연결되었습니다.\n";
+    
 
     int server_fd, new_socket; // server_fd: 서버 소켓, new_socket: 클라이언트와 통신할 소켓
     struct sockaddr_in address; // 서버 주소 정보를 담을 구조체
     int addrlen = sizeof(address); // 주소 구조체 크기
-    char buffer[BUFFER_SIZE] = {0}; // 데이터 수신을 위한 버퍼
 
     // 1. 소켓 생성 (IPv4, TCP 스트림 소켓)
     // AF_INET: IPv4
@@ -64,50 +58,28 @@ int tcp_run() {
                   << ntohs(address.sin_port) << endl;
 
         // 5. 클라이언트와 데이터 송수신
-        int bytes_received;
-        while ((bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0)) > 0) {
-            buffer[bytes_received] = '\0';
+        buffer_pack recvBP;
+        while ((recvBP.cur_data_size = recv(new_socket, recvBP.buffer, BUFFER_SIZE, 0)) > 0) {
             cout << "========수신========\n";
-            for(int i=0;i<bytes_received;i++){
-                cout << i << " : " << buffer[i] << "\n";
+            for(int i=0;i<recvBP.cur_data_size;i++){
+                cout << i << " : " << recvBP.buffer[i] << "\n";
             }
 
-            // 수신받은 메시지 처리부 (함수화 필요)
-            string str(buffer);
-            vector<string> parts;
-            int start = 0;
-            int end = str.find('/');
-            while(end != string::npos){
-                parts.push_back(str.substr(start,end-start));
-                start = end+1;
-                end = str.find('/');
-            }
+            // 수신받은 메시지, 송신 버퍼 처리 파트
+            buffer_pack sendBP = buffer_process(recvBP.buffer,recvBP.cur_data_size);
 
-            // parts 구성 : 요청 번호, 성공실패여부, 데이터1, 데이터2, 데이터3
-            if(parts[0] == "1"){ // 클라이언트의 이미지&텍스트 요청 신호
-                // 데이터 1 : 조회할 데이터의 타임스탬프
-                string timestamp = parts[2];
-                LogData logData = select_data_for_timestamp(db, timestamp);
-                
-                // 클라이언트에게 보낼 이미지&텍스트 데이터
-                buffer[0] = '\0';
-                strcat(buffer,"10/1/");
-                memcpy(buffer+strlen(buffer),logData.imageBlob.data(),logData.imageBlob.size());
-                strcat(buffer,"/");
-                memcpy(buffer+strlen(buffer),logData.timestamp.data(),logData.timestamp.size());
-            }
-
-            send(new_socket, buffer, bytes_received, 0);
+            send(new_socket, sendBP.buffer, sendBP.cur_data_size, 0);
             cout << "========송신========\n";
-            for(int i=0;i<bytes_received;i++){
-                cout << i << " : " << buffer[i] << "\n";
+            for(int i=0;i<sendBP.cur_data_size;i++){
+                cout << i << " : " << sendBP.buffer[i] << "\n";
             }
 
             // 버퍼 초기화
-            memset(buffer, 0, BUFFER_SIZE);
+            memset(recvBP.buffer, 0, BUFFER_SIZE);
+            memset(sendBP.buffer, 0, BUFFER_SIZE);
         }
 
-        if (bytes_received == 0) {
+        if (recvBP.cur_data_size == 0) {
             cout << "클라이언트 연결 종료됨." << endl;
         } else {
             cerr << "데이터 수신 오류: " << strerror(errno) << endl;
@@ -121,4 +93,50 @@ int tcp_run() {
     // 서버 소켓 닫기
     close(server_fd);
     return 0;
+}
+
+// 수신 버퍼를 통해 내부 처리를 수행하고 송신 버퍼를 반환하는 함수
+buffer_pack buffer_process(char buffer[],int bytes_received){
+    SQLite::Database db("server_log.db",SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    cout << "데이터베이스 파일 'server_log.db'에 연결되었습니다.\n";
+
+    string str = "";
+    for(int i=0;i<bytes_received;i++){
+        str += buffer[i];
+    }
+    vector<string> parts;
+    cout << "string : " << str << "\n";
+    int start = 0;
+    int end = str.find('/');
+    while(end != string::npos){
+        cout << "split중 : " << end << "\n";
+        parts.push_back(str.substr(start,end-start));
+        start = end+1;
+        end = str.find('/',start);
+    }
+    parts.push_back(str.substr(start));
+    for(auto p:parts){
+        cout << p << "\n";
+    }
+
+    buffer_pack bp;
+    // parts 구성 : 요청 번호, 성공실패여부, 데이터1, 데이터2, 데이터3
+    if(parts[0] == "1"){ // 클라이언트의 이미지&텍스트 요청 신호
+        // 데이터 1 : 조회할 데이터의 타임스탬프
+        cout << "1번 요청 수신\n";
+        string timestamp = parts[2];
+        LogData logData = select_data_for_timestamp(db, timestamp);
+        
+        // 클라이언트에게 보낼 이미지&텍스트 데이터
+        bp.buffer[0] = '\0';
+        memcpy(bp.buffer,string("10/1/").data(),string("10/1/").size());
+        bp.cur_data_size += string("10/1/").size();
+        memcpy(bp.buffer+bp.cur_data_size,logData.imageBlob.data(),logData.imageBlob.size());
+        bp.cur_data_size += logData.imageBlob.size();
+        memcpy(bp.buffer+bp.cur_data_size,string("/").data(),1);
+        bp.cur_data_size += 1;
+        memcpy(bp.buffer+bp.cur_data_size,logData.timestamp.data(),logData.timestamp.size());
+        bp.cur_data_size += logData.timestamp.size();
+    }
+    return bp;
 }
