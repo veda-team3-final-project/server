@@ -136,9 +136,9 @@ void metadata_thread() {
 }
 
 // 메인 함수
-int main() {
-    metadata_thread(); // 실시간 처리 시작
-    return 0;
-}
+// int main() {
+//     metadata_thread(); // 실시간 처리 시작
+//     return 0;
+// }
 //경고 뜰때 타임스탬프랑 캡쳐
 //캠쳐사진 이름을 타임스탬프로
