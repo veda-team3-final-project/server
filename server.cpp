@@ -5,6 +5,7 @@
 
 #include "rtsp_server.hpp"
 #include "tcp_server.hpp"
+#include "metadata/handler.cpp"
 
 #include <thread>
 
@@ -17,8 +18,11 @@ int main(int argc, char *argv[]){
 
     thread tcp_run_thread(tcp_run);
 
+    thread metadata_run_thread(metadata_thread);
+
     rtsp_run_thread.join();
     tcp_run_thread.join();
+    metadata_run_thread.join();
 
     return 0;
 }
