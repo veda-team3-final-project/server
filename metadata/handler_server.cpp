@@ -24,7 +24,9 @@ struct Line {
 };
 
 // 설정값
-constexpr float direction_threshold = 0.6f;
+constexpr float direction_threshold = 0.6f; // 차량 방향 판단을 위한 코사인 유사도 임계값
+constexpr float dist_threshold = 10.0f; // 차량 이동 판단을 위한 거리 임계값
+// 임의의 라인 정의
 const unordered_map<string, Line> rule_lines = {
     {"name1", {500, 100, 100, 500}},
     {"name2", {200, 250, 500, 600}}
@@ -124,25 +126,40 @@ bool is_any_vehicle_moving(const string& xml, const string& rule_name, string& d
             Point move_vec = {cog.x - prev_it->second.x, cog.y - prev_it->second.y};
             float dist = sqrt(move_vec.x * move_vec.x + move_vec.y * move_vec.y);
 
-            if (dist > 15.0f) {
+            if (dist > dist_threshold) {
                 auto rule_it = rule_lines.find(rule_name);
                 if (rule_it != rule_lines.end()) {
                     const Line& line = rule_it->second;
                     Point line_vec = {line.x2 - line.x1, line.y2 - line.y1};
-                    float cosine_sim = compute_cosine_similarity(move_vec, line_vec);
 
-                    if (fabs(cosine_sim) >= direction_threshold) {
-                        char sign = (cosine_sim >= 0) ? '+' : '-';
-                        direction_info = "(Direction: ";
-                        direction_info += sign;
-                        direction_info += ", cosine: ";
-                        direction_info += to_string(cosine_sim);
-                        direction_info += ")";
+                    // 내적 기반 cosine similarity
+                    float dot = compute_cosine_similarity(move_vec, line_vec);
+
+                    // 외적 값 계산
+                    float cross = line_vec.x * move_vec.y - line_vec.y * move_vec.x;
+
+                    if (fabs(dot) > direction_threshold) {
+                        // 측면 방향 (라인 방향 ≈ 사람 기준 좌우 방향)
+                        if (cross > 0)
+                            direction_info = "(측면 이동: ← 사람 기준 왼쪽)";
+                        else if (cross < 0)
+                            direction_info = "(측면 이동: → 사람 기준 오른쪽)";
+                        else
+                            direction_info = "(측면 이동: 정렬)";
+                    }
+                    else if (fabs(dot) < 0.3f) {
+                        // 정면 또는 등 뒤 방향
+                        direction_info = "(정면 또는 등 뒤 이동)"; 
+                    }
+                    else {
+                        direction_info = "(사선 이동, 차량 이동 방향 불명확)";
                     }
                 }
                 prev_vehicle_centers = move(current_vehicle_centers);
                 return true;
             }
+        } else {
+            direction_info = "(새로운 차량 발견, 이동 없음)";
         }
     }
 
