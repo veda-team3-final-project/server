@@ -8,6 +8,8 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
+#include <curl/curl.h>
+#include <sstream>
 
 #include "SQLiteCpp/SQLiteCpp.h"
 
@@ -21,20 +23,23 @@ struct Point {
 
 struct Line {
     float x1, y1, x2, y2;
+    string mode;
+    string name;
 };
 
 // 설정값
 constexpr float direction_threshold = 0.6f; // 차량 방향 판단을 위한 코사인 유사도 임계값
 constexpr float dist_threshold = 10.0f; // 차량 이동 판단을 위한 거리 임계값
-// 임의의 라인 정의
-const unordered_map<string, Line> rule_lines = {
-    {"name1", {500, 100, 100, 500}},
-    {"name2", {200, 250, 500, 600}}
-};
+
+// 글로벌 변수로 선언 (서버에서 가져온 라인 정보)
+unordered_map<string, Line> rule_lines;
 
 // 전역 상태
 mutex data_mutex;
 unordered_map<int, Point> prev_vehicle_centers;
+
+// 함수 전방 선언
+bool parse_line_configuration(const string& json_response);
 
 // 코사인 유사도 계산
 float compute_cosine_similarity(const Point& a, const Point& b) {
@@ -178,6 +183,254 @@ bool check_linecrossing_event(const string& xml, string& out_rule_name) {
     return false;
 }
 
+// HTTP 응답을 위한 콜백 함수
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, string* userp) {
+    userp->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+// 간단한 JSON 파싱 함수들
+string extract_json_string(const string& json, const string& key) {
+    string search_pattern = "\"" + key + "\":\"";
+    size_t start = json.find(search_pattern);
+    if (start == string::npos) return "";
+    
+    start += search_pattern.length();
+    size_t end = json.find("\"", start);
+    if (end == string::npos) return "";
+    
+    return json.substr(start, end - start);
+}
+
+int extract_json_int(const string& json, const string& key) {
+    string search_pattern = "\"" + key + "\":";
+    size_t start = json.find(search_pattern);
+    if (start == string::npos) return 0;
+    
+    start += search_pattern.length();
+    size_t end = json.find_first_of(",}", start);
+    if (end == string::npos) return 0;
+    
+    string value = json.substr(start, end - start);
+    return stoi(value);
+}
+
+// 서버에서 라인 설정 가져오기
+bool fetch_line_configuration() {
+    CURL* curl;
+    CURLcode res;
+    string response_data;
+    
+    curl = curl_easy_init();
+    if (!curl) {
+        cerr << "[ERROR] CURL 초기화 실패" << endl;
+        return false;
+    }
+    
+    // URL 설정
+    curl_easy_setopt(curl, CURLOPT_URL, "https://192.168.0.46/opensdk/WiseAI/configuration/linecrossing");
+    
+    // 응답 데이터 콜백
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+    
+    // Digest 인증
+    curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
+    curl_easy_setopt(curl, CURLOPT_USERPWD, "admin:admin123@");
+    
+    // SSL 검증 비활성화
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    
+    // HTTP 헤더 설정
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "Accept-Language: ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7");
+    headers = curl_slist_append(headers, "Connection: keep-alive");
+    headers = curl_slist_append(headers, "Cookie: TRACKID=0842ca6f0d90294ea7de995c40a4aac6");
+    headers = curl_slist_append(headers, "Referer: https://192.168.0.46/home/setup/opensdk/html/WiseAI/index.html");
+    headers = curl_slist_append(headers, "Sec-Fetch-Dest: empty");
+    headers = curl_slist_append(headers, "Sec-Fetch-Mode: cors");
+    headers = curl_slist_append(headers, "Sec-Fetch-Site: same-origin");
+    headers = curl_slist_append(headers, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36");
+    headers = curl_slist_append(headers, "sec-ch-ua: \"Not)A;Brand\";v=\"8\", \"Chromium\";v=\"138\", \"Google Chrome\";v=\"138\"");
+    headers = curl_slist_append(headers, "sec-ch-ua-mobile: ?0");
+    headers = curl_slist_append(headers, "sec-ch-ua-platform: \"Windows\"");
+    
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    
+    // 요청 실행
+    res = curl_easy_perform(curl);
+    
+    // 정리
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    
+    if (res != CURLE_OK) {
+        cerr << "[ERROR] HTTP 요청 실패: " << curl_easy_strerror(res) << endl;
+        return false;
+    }
+    
+    cout << "[INFO] 서버 응답: " << response_data << endl;
+    
+    // JSON 파싱하여 라인 정보 추출
+    return parse_line_configuration(response_data);
+}
+
+// JSON 응답에서 라인 설정 파싱
+bool parse_line_configuration(const string& json_response) {
+    cout << "[DEBUG] JSON 응답 길이: " << json_response.length() << endl;
+    
+    // "line":[] 패턴 확인 (빈 라인 배열)
+    if (json_response.find("\"line\":[]") != string::npos) {
+        cout << "[INFO] 서버에 설정된 라인이 없습니다. 프로그램을 종료합니다." << endl;
+        return false;
+    }
+    
+    // 라인 정보 파싱
+    rule_lines.clear();
+    
+    // "line":[{...}] 패턴에서 각 라인 객체 추출
+    size_t line_start = json_response.find("\"line\":[");
+    if (line_start == string::npos) {
+        cerr << "[ERROR] 라인 정보를 찾을 수 없습니다." << endl;
+        return false;
+    }
+    
+    cout << "[DEBUG] line_start 위치: " << line_start << endl;
+    
+    line_start += 8; // "line":[ 길이
+    
+    // 중첩된 배열을 고려해서 올바른 라인 배열의 끝 찾기
+    int bracket_count = 0;
+    size_t line_end = line_start;
+    for (size_t i = line_start; i < json_response.length(); i++) {
+        if (json_response[i] == '[') bracket_count++;
+        else if (json_response[i] == ']') {
+            bracket_count--;
+            if (bracket_count == -1) {  // line 배열의 끝
+                line_end = i;
+                break;
+            }
+        }
+    }
+    
+    if (line_end == line_start) {
+        cerr << "[ERROR] 라인 배열 종료를 찾을 수 없습니다." << endl;
+        return false;
+    }
+    
+    cout << "[DEBUG] line_end 위치: " << line_end << endl;
+    
+    string lines_section = json_response.substr(line_start, line_end - line_start);
+    cout << "[DEBUG] lines_section: " << lines_section << endl;
+    
+    // 각 라인 객체 파싱 (간단한 방식)
+    size_t pos = 0;
+    int line_count = 0;
+    while ((pos = lines_section.find("{", pos)) != string::npos) {
+        line_count++;
+        cout << "[DEBUG] 라인 객체 " << line_count << " 파싱 시작, pos: " << pos << endl;
+        
+        size_t obj_start = pos;
+        
+        // 중첩된 객체를 고려한 객체 끝 찾기
+        int brace_count = 0;
+        size_t obj_end = obj_start;
+        for (size_t i = obj_start; i < lines_section.length(); i++) {
+            if (lines_section[i] == '{') brace_count++;
+            else if (lines_section[i] == '}') {
+                brace_count--;
+                if (brace_count == 0) {
+                    obj_end = i;
+                    break;
+                }
+            }
+        }
+        
+        if (obj_end == obj_start) {
+            cout << "[DEBUG] 객체 끝을 찾을 수 없음" << endl;
+            break;
+        }
+        
+        string line_obj = lines_section.substr(obj_start, obj_end - obj_start + 1);
+        cout << "[DEBUG] 라인 객체: " << line_obj << endl;
+        
+        // name 추출
+        string name = extract_json_string(line_obj, "name");
+        cout << "[DEBUG] 추출된 name: '" << name << "'" << endl;
+        
+        // mode 추출
+        string mode = extract_json_string(line_obj, "mode");
+        cout << "[DEBUG] 추출된 mode: '" << mode << "'" << endl;
+        
+        // lineCoordinates 추출
+        size_t coord_start = line_obj.find("\"lineCoordinates\":[");
+        if (coord_start != string::npos) {
+            cout << "[DEBUG] lineCoordinates 찾음" << endl;
+            coord_start += 19; // "lineCoordinates":[ 길이
+            size_t coord_end = line_obj.find("]", coord_start);
+            if (coord_end != string::npos) {
+                string coords = line_obj.substr(coord_start, coord_end - coord_start);
+                cout << "[DEBUG] 좌표 문자열: " << coords << endl;
+                
+                // 첫 번째와 두 번째 좌표 추출
+                size_t first_obj = coords.find("{");
+                size_t second_obj = coords.find("{", first_obj + 1);
+                
+                if (first_obj != string::npos && second_obj != string::npos) {
+                    size_t first_end = coords.find("}", first_obj);
+                    size_t second_end = coords.find("}", second_obj);
+                    
+                    if (first_end != string::npos && second_end != string::npos) {
+                        string first_coord = coords.substr(first_obj, first_end - first_obj + 1);
+                        string second_coord = coords.substr(second_obj, second_end - second_obj + 1);
+                        
+                        cout << "[DEBUG] 첫 번째 좌표: " << first_coord << endl;
+                        cout << "[DEBUG] 두 번째 좌표: " << second_coord << endl;
+                        
+                        float x1 = static_cast<float>(extract_json_int(first_coord, "x"));
+                        float y1 = static_cast<float>(extract_json_int(first_coord, "y"));
+                        float x2 = static_cast<float>(extract_json_int(second_coord, "x"));
+                        float y2 = static_cast<float>(extract_json_int(second_coord, "y"));
+                        
+                        cout << "[DEBUG] 파싱된 좌표: (" << x1 << "," << y1 << ")-(" << x2 << "," << y2 << ")" << endl;
+                        
+                        // 라인 정보 저장
+                        Line line = {x1, y1, x2, y2, mode, name};
+                        rule_lines[name] = line;
+                        
+                        cout << "[INFO] 라인 추가: " << name 
+                             << " (" << x1 << "," << y1 << ")-(" << x2 << "," << y2 << ") "
+                             << "모드: " << mode << endl;
+                    } else {
+                        cout << "[DEBUG] 좌표 객체 끝을 찾을 수 없음" << endl;
+                    }
+                } else {
+                    cout << "[DEBUG] 두 번째 좌표 객체를 찾을 수 없음" << endl;
+                }
+            } else {
+                cout << "[DEBUG] lineCoordinates 배열 끝을 찾을 수 없음" << endl;
+            }
+        } else {
+            cout << "[DEBUG] lineCoordinates를 찾을 수 없음" << endl;
+        }
+        
+        pos = obj_end + 1;
+    }
+    
+    cout << "[DEBUG] 총 처리된 라인 수: " << line_count << endl;
+    cout << "[DEBUG] rule_lines 크기: " << rule_lines.size() << endl;
+    
+    if (rule_lines.empty()) {
+        cout << "[INFO] 유효한 라인이 없습니다. 프로그램을 종료합니다." << endl;
+        return false;
+    }
+    
+    cout << "[INFO] 총 " << rule_lines.size() << "개의 라인을 로드했습니다." << endl;
+    return true;
+}
+
 // 이벤트 프레임 처리
 void main_loop(const string& xml) {
     string rule_name;
@@ -223,13 +476,27 @@ void metadata_thread() {
 
 // 메인 진입점
 int main() {
+    // CURL 라이브러리 초기화
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    
+    cout << "[INFO] 서버에서 라인 설정을 가져오는 중..." << endl;
+    
+    // 서버에서 라인 설정 가져오기
+    if (!fetch_line_configuration()) {
+        cout << "[ERROR] 라인 설정을 가져올 수 없어 프로그램을 종료합니다." << endl;
+        curl_global_cleanup();
+        return 1;
+    }
+    
+    cout << "[INFO] 메타데이터 모니터링을 시작합니다..." << endl;
     metadata_thread();
+    
+    // CURL 라이브러리 정리
+    curl_global_cleanup();
     return 0;
 }
 
 /*compile with:
 g++ handler_server.cpp -o handler_server \
-    -I/home/park/vcpkg/installed/arm64-linux/include \
-    -L/home/park/vcpkg/installed/arm64-linux/lib \
-    -lSQLiteCpp -lsqlite3 -std=c++17
+    -lSQLiteCpp -lsqlite3 -lcurl -std=c++17
 */
