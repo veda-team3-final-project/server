@@ -1,7 +1,6 @@
 // TCP 서버 구동 모듈
 
-#ifndef TCPSERVER_HPP
-#define TCPSERVER_HPP
+#pragma once
 
 #include <iostream>   // 표준 입출력 (std::cout, std::cerr)
 #include <string>     // 문자열 처리 (std::string)
@@ -17,6 +16,17 @@
 #include <cstring>    // memset, strerror
 #include <cerrno>     // errno
 
+using namespace std;
+
+const int PORT = 8080;
+
+const int BUFFER_SIZE = 1024;
+
+struct buffer_pack{
+    char buffer[BUFFER_SIZE] = {0};
+    size_t cur_data_size = 0;
+};
+
 int tcp_run();
 
-#endif // TCPSERVER_HPP
+buffer_pack buffer_process(char[],int);
