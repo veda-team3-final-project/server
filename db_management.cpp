@@ -17,6 +17,7 @@ void insert_data(SQLite::Database& db, vector<unsigned char> image, string times
         SQLite::Statement query(db, "INSERT INTO detections (image, timestamp) VALUES (?, ?)");
         query.bind(1, image.data(), image.size());
         query.bind(2, timestamp);
+        cout << "Prepared SQL for insert: " << query.getExpandedSQL() << endl;
         query.exec();
         
         cout << "데이터 추가: (시간: " << timestamp << ")" << endl;
@@ -32,6 +33,7 @@ void select_all_data(SQLite::Database& db) {
     cout << "\n--- 모든 데이터 목록 ---" << endl;
     try {
         SQLite::Statement query(db, "SELECT * FROM detections ORDER BY timestamp");
+        cout << "Prepared SQL for select all: " << query.getExpandedSQL() << endl;
         while (query.executeStep()) {
             int id = query.getColumn("id");
 
@@ -57,6 +59,7 @@ LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
     try {
         SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp = ? ORDER BY timestamp");
         query.bind(1, timestamp);
+        cout << "Prepared SQL for select one data: " << query.getExpandedSQL() << endl;
         while (query.executeStep()) {
 
             const unsigned char* ucharBlobData = static_cast<const unsigned char*>(query.getColumn("image").getBlob());
@@ -73,9 +76,34 @@ LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
     return logData;
 }
 
+vector<LogData> select_data_for_timestamp_range(SQLite::Database& db, string startTimestamp, string endTimestamp){
+    vector<LogData> logDatas;
+    try {
+        SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp");
+        query.bind(1, startTimestamp);
+        query.bind(2, endTimestamp);
+        cout << "Prepared SQL for select data vector: " << query.getExpandedSQL() << endl;
+        while (query.executeStep()) {
+
+            const unsigned char* ucharBlobData = static_cast<const unsigned char*>(query.getColumn("image").getBlob());
+            int blobSize = query.getColumn("image").getBytes();
+            vector<unsigned char> image(ucharBlobData,ucharBlobData+blobSize);
+
+            string timestamp = query.getColumn("timestamp");
+
+            LogData logData = {image, timestamp};
+            logDatas.push_back(logData);
+        }
+    } catch (const exception& e) {
+        cerr << "사용자 조회 실패: " << e.what() << endl;
+    }
+    return logDatas;
+}
+
 void delete_data(SQLite::Database& db, int id) {
     SQLite::Statement query(db, "DELETE FROM detections WHERE id = ?");
     query.bind(1, id);
+    cout << "Prepared SQL for delete one data: " << query.getExpandedSQL() << endl;
     int changes = query.exec();
     if (changes > 0) {
         cout << id << "해당 id의 data를 삭제했습니다." << endl;
@@ -88,6 +116,7 @@ void delete_data(SQLite::Database& db, int id) {
 void delete_all_data(SQLite::Database& db) {
     try {
         SQLite::Statement query(db, "DELETE FROM detections");
+        cout << "Prepared SQL for delete all: " << query.getExpandedSQL() << endl;
         int changes = query.exec();
         cout << "테이블의 모든 데이터를 삭제했습니다. 삭제된 행 수: " << changes << endl;
     } catch (const exception& e) {

@@ -60,6 +60,35 @@ int tcp_run() {
         // 5. 클라이언트와 데이터 송수신
         buffer_pack recvBP;
         while ((recvBP.cur_data_size = recv(new_socket, recvBP.buffer, BUFFER_SIZE, 0)) > 0) {
+
+            chrono::system_clock::time_point now = chrono::system_clock::now();
+
+            // 2. time_point를 time_t 타입으로 변환 (Unix timestamp와 유사)
+            // time_t는 C 스타일 시간 관리에 사용되는 정수 타입
+            time_t now_c = chrono::system_clock::to_time_t(now);
+
+            // 밀리초/마이크로초/나노초 등 더 정밀한 시간도 출력 가능 (C++11/14/17 방식으로는 복잡)
+            // chrono::duration_cast를 사용
+            auto duration_since_epoch = now.time_since_epoch();
+            auto milliseconds = chrono::duration_cast<chrono::milliseconds>(duration_since_epoch).count() % 1000;
+
+            // --- 한국 시간 (KST) 출력 부분 추가 ---
+            // 한국 시간은 UTC + 9시간 (9 * 60 * 60 초)
+            const long KST_OFFSET_SECONDS = 9 * 60 * 60; 
+
+            // UTC 시간을 기준으로 9시간을 더하여 KST time_t 값 계산
+            time_t kst_now_c = now_c + KST_OFFSET_SECONDS;
+            
+            // 계산된 KST time_t 값을 tm 구조체로 변환 (UTC 기준 tm 구조체를 재사용)
+            tm* kst_tm = gmtime(&kst_now_c); // gmtime은 UTC 기반 시간을 tm으로 변환
+
+            // 한국 시간 (KST), 밀리초 포함 출력
+            // 밀리초는 epoch_seconds 기준으로 계산되었으므로, KST 시간에 그대로 적용
+            cout << "["
+                    << put_time(kst_tm, "%Y-%m-%d %H:%M:%S") 
+                    << "." << setfill('0') << setw(3) << milliseconds << " KST]" << endl;
+            // ------------------------------------------
+
             cout << "========수신========\n";
             for(int i=0;i<recvBP.cur_data_size;i++){
                 cout << i << " : " << recvBP.buffer[i] << "\n";
@@ -124,19 +153,16 @@ buffer_pack buffer_process(char buffer[],int bytes_received){
     if(parts[0] == "1"){ // 클라이언트의 이미지&텍스트 요청 신호
         // 데이터 1 : 조회할 데이터의 타임스탬프
         cout << "1번 요청 수신\n";
-        string timestamp = parts[2];
-        LogData logData = select_data_for_timestamp(db, timestamp);
+        string startTimestamp = parts[2];
+        string endTimestamp = parts[3];
+        vector<LogData> logDatas = select_data_for_timestamp_range(db, startTimestamp, endTimestamp);
         
         // 클라이언트에게 보낼 이미지&텍스트 데이터
         bp.buffer[0] = '\0';
         memcpy(bp.buffer,string("10/1/").data(),string("10/1/").size());
         bp.cur_data_size += string("10/1/").size();
-        memcpy(bp.buffer+bp.cur_data_size,logData.imageBlob.data(),logData.imageBlob.size());
-        bp.cur_data_size += logData.imageBlob.size();
-        memcpy(bp.buffer+bp.cur_data_size,string("/").data(),1);
-        bp.cur_data_size += 1;
-        memcpy(bp.buffer+bp.cur_data_size,logData.timestamp.data(),logData.timestamp.size());
-        bp.cur_data_size += logData.timestamp.size();
+        memcpy(bp.buffer+bp.cur_data_size,logDatas.data(),logDatas.size());
+        bp.cur_data_size += logDatas.size();
     }
     return bp;
 }

@@ -24,6 +24,8 @@ void select_all_data(SQLite::Database& db);
 
 LogData select_data_for_timestamp(SQLite::Database& db, string timestamp);
 
+vector<LogData> select_data_for_timestamp_range(SQLite::Database& db, string startTimestamp, string endTimestamp);
+
 void delete_data(SQLite::Database& db, int id);
 
 void delete_all_data(SQLite::Database& db);

@@ -5,6 +5,9 @@
 #include <iostream>   // 표준 입출력 (std::cout, std::cerr)
 #include <string>     // 문자열 처리 (std::string)
 #include <vector>     // 동적 배열 (std::vector, 여기서는 사용되지 않지만 이전 컨텍스트에서 포함됨)
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 
 // POSIX 소켓 API 관련 헤더
 #include <sys/socket.h> // socket, bind, listen, accept
