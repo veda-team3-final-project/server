@@ -146,9 +146,9 @@ bool is_any_vehicle_moving(const string& xml, const string& rule_name, string& d
                     if (fabs(dot) > direction_threshold) {
                         // 측면 방향 (라인 방향 ≈ 사람 기준 좌우 방향)
                         if (cross > 0)
-                            direction_info = "(측면 이동: ← 사람 기준 왼쪽)";
+                            direction_info = "(측면 이동: ← 사람 기준 오른쪽에서 차량 등장)";
                         else if (cross < 0)
-                            direction_info = "(측면 이동: → 사람 기준 오른쪽)";
+                            direction_info = "(측면 이동: → 사람 기준 왼쪽에서 차량 등장)";
                         else
                             direction_info = "(측면 이동: 정렬)";
                     }
