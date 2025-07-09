@@ -54,30 +54,30 @@ void select_all_data(SQLite::Database& db) {
     return;
 }
 
-LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
-    LogData logData;
-    try {
-        SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp = ? ORDER BY timestamp");
-        query.bind(1, timestamp);
-        cout << "Prepared SQL for select one data: " << query.getExpandedSQL() << endl;
-        while (query.executeStep()) {
+// LogData select_data_for_timestamp(SQLite::Database& db, string timestamp){
+//     LogData logData;
+//     try {
+//         SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp = ? ORDER BY timestamp");
+//         query.bind(1, timestamp);
+//         cout << "Prepared SQL for select one data: " << query.getExpandedSQL() << endl;
+//         while (query.executeStep()) {
 
-            const unsigned char* ucharBlobData = static_cast<const unsigned char*>(query.getColumn("image").getBlob());
-            int blobSize = query.getColumn("image").getBytes();
-            vector<unsigned char> image(ucharBlobData,ucharBlobData+blobSize);
+//             const unsigned char* ucharBlobData = static_cast<const unsigned char*>(query.getColumn("image").getBlob());
+//             int blobSize = query.getColumn("image").getBytes();
+//             vector<unsigned char> image(ucharBlobData,ucharBlobData+blobSize);
 
-            string timestamp = query.getColumn("timestamp");
+//             string timestamp = query.getColumn("timestamp");
 
-            logData = {image, timestamp};
-        }
-    } catch (const exception& e) {
-        cerr << "사용자 조회 실패: " << e.what() << endl;
-    }
-    return logData;
-}
+//             logData = {image, timestamp};
+//         }
+//     } catch (const exception& e) {
+//         cerr << "사용자 조회 실패: " << e.what() << endl;
+//     }
+//     return logData;
+// }
 
-vector<LogData> select_data_for_timestamp_range(SQLite::Database& db, string startTimestamp, string endTimestamp){
-    vector<LogData> logDatas;
+vector<unsigned char> select_data_for_timestamp_range(SQLite::Database& db, string startTimestamp, string endTimestamp){
+    vector<unsigned char> logDatas;
     try {
         SQLite::Statement query(db, "SELECT * FROM detections WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp");
         query.bind(1, startTimestamp);
@@ -91,8 +91,10 @@ vector<LogData> select_data_for_timestamp_range(SQLite::Database& db, string sta
 
             string timestamp = query.getColumn("timestamp");
 
-            LogData logData = {image, timestamp};
-            logDatas.push_back(logData);
+            logDatas.insert(logDatas.end(),string("10/1/").begin(),string("10/1/").end());
+            logDatas.insert(logDatas.end(),image.begin(),image.end());
+            logDatas.insert(logDatas.end(),string("/").begin(),string("/").end());
+            logDatas.insert(logDatas.end(),timestamp.begin(),timestamp.end());
         }
     } catch (const exception& e) {
         cerr << "사용자 조회 실패: " << e.what() << endl;

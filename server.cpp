@@ -10,6 +10,7 @@
 
 #include <thread>
 #include <fstream>
+#include <opencv2/opencv.hpp>
 
 using namespace std;
 
@@ -56,12 +57,33 @@ int main(int argc, char *argv[]){
     // file.close();
 
     // insert_data(db,file_data,"2025-07-08T01:10:10.037Z");
+
+    // vector<LogData> vl = select_data_for_timestamp_range(db,"2025-07-08T00","2025-07-08T12");
+    // for(auto ld : vl){
+    //     cv::Mat decoded_image = cv::imdecode(ld.imageBlob, cv::IMREAD_COLOR);
+
+    //     if (decoded_image.empty()) {
+    //         std::cerr << "Error: Could not decode image from binary data." << std::endl;
+    //         return -1;
+    //     }
+    
+    //     // --- 3. 디코딩된 이미지를 화면에 표시 ---
+    //     cv::imshow("Decoded Image", decoded_image);
+
+    //     cv::waitKey(0);
+    // }
+
+    // delete_all_data(db);
+    
+
+
     /////////////////////
 
     thread rtsp_run_thread(rtsp_run,argc,argv);
 
     thread tcp_run_thread(tcp_run);
 
+    // 지연이 metadata 서버 때문은 아님. tcp 내부 처리 문제인듯
     thread metadata_run_thread(metadata_thread);
 
     rtsp_run_thread.join();

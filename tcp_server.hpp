@@ -32,4 +32,4 @@ struct buffer_pack{
 
 int tcp_run();
 
-buffer_pack buffer_process(char[],int);
+ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags);
