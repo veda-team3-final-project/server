@@ -11,10 +11,10 @@
 
 using namespace std;
 
-struct LogData{
-    vector<unsigned char> imageBlob;
-    string timestamp;
-};
+// struct LogData{
+//     vector<unsigned char> imageBlob;
+//     string timestamp;
+// };
 
 void create_table(SQLite::Database& db);
 
@@ -22,7 +22,9 @@ void insert_data(SQLite::Database& db, vector<unsigned char> image, string times
 
 void select_all_data(SQLite::Database& db);
 
-LogData select_data_for_timestamp(SQLite::Database& db, string timestamp);
+// vector<unsigned char> select_data_for_timestamp(SQLite::Database& db, string timestamp);
+
+vector<unsigned char> select_data_for_timestamp_range(SQLite::Database& db, string startTimestamp, string endTimestamp);
 
 void delete_data(SQLite::Database& db, int id);
 
