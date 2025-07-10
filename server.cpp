@@ -10,7 +10,7 @@
 
 #include <thread>
 #include <fstream>
-#include <opencv2/opencv.hpp>
+// #include <opencv2/opencv.hpp>
 
 using namespace std;
 
@@ -84,11 +84,11 @@ int main(int argc, char *argv[]){
     thread tcp_run_thread(tcp_run);
 
     // 지연이 metadata 서버 때문은 아님. tcp 내부 처리 문제인듯
-    thread metadata_run_thread(metadata_thread);
+    // thread metadata_run_thread(metadata_thread);
 
     rtsp_run_thread.join();
     tcp_run_thread.join();
-    metadata_run_thread.join();
+    // metadata_run_thread.join();
 
     
 
