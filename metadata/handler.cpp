@@ -123,7 +123,9 @@ void metadata_thread() {
     char buffer[BUFFER_SIZE];
     std::string xml_buffer;
 
+    cout << "buffer open before\n";
     while (fgets(buffer, BUFFER_SIZE, pipe)) {
+        cout << "buffer open after\n";
         xml_buffer += buffer;
 
         if (xml_buffer.find("</tt:Frame>") != std::string::npos) {
