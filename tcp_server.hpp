@@ -36,3 +36,5 @@ int tcp_run();
 bool recvAll(int fd, char* buffer, size_t len);
 
 ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags);
+
+void printNowTimeKST();
