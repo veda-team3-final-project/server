@@ -57,6 +57,65 @@ string extract_timestamp(const string& block) {
     return "unknown_time";
 }
 
+// UTC 타임스탬프 문자열을 KST 타임스탬프 문자열로 변환하는 함수
+// 입력 형식: "YYYY-MM-DDTHH:MM:SS.sssZ" (UTC)
+// 출력 형식: "YYYY-MM-DDTHH:MM:SS.sssKST" (KST)
+string utcToKstString(const string& utc_timestamp_str) {
+    // 1. UTC 문자열 파싱 (년, 월, 일, 시, 분, 초, 밀리초)
+    int year, month, day, hour, minute, second, millisecond;
+#if defined(_WIN32) || defined(_WIN64)
+    // Windows (MSVC)용 sscanf_s
+    int scan_count = sscanf_s(utc_timestamp_str.c_str(), "%d-%d-%dT%d:%d:%d.%dZ",
+                              &year, &month, &day, &hour, &minute, &second, &millisecond);
+#else
+    // POSIX/Linux/macOS용 sscanf
+    int scan_count = sscanf(utc_timestamp_str.c_str(), "%d-%d-%dT%d:%d:%d.%dZ",
+                            &year, &month, &day, &hour, &minute, &second, &millisecond);
+#endif
+    if (scan_count < 7) { // 밀리초까지 모두 파싱되었는지 확인 (최소 7개 항목)
+        cerr << "오류: 타임스탬프 문자열 형식 불일치 또는 파싱 실패: " << utc_timestamp_str << endl;
+        return ""; // 빈 문자열 반환 또는 예외 발생
+    }
+    // 2. 파싱된 UTC 정보를 tm 구조체에 채우기
+    tm tm_utc = {};
+    tm_utc.tm_year = year - 1900; // tm_year는 1900년으로부터의 연도
+    tm_utc.tm_mon = month - 1;   // tm_mon은 0(1월)부터 11(12월)
+    tm_utc.tm_mday = day;
+    tm_utc.tm_hour = hour;
+    tm_utc.tm_min = minute;
+    tm_utc.tm_sec = second;
+    tm_utc.tm_isdst = 0; // UTC는 일광 절약 시간 적용 안 함
+    // 3. tm (UTC)을 time_t (Unix timestamp)로 변환 (로컬 시간대 오프셋 보정)
+    // mktime은 로컬 시간을 기준으로 time_t를 계산하므로,
+    // UTC tm_struct를 time_t로 변환하려면 로컬 시간과 UTC 시간의 오프셋을 조정해야 합니다.
+    time_t utc_time_c = mktime(&tm_utc); // 이 time_c는 로컬 시간대 기준 time_t
+#if defined(_WIN32) || defined(_WIN64)
+    utc_time_c -= _timezone; // Windows에서 UTC와의 차이 (초 단위)
+#else
+    utc_time_c -= timezone;  // POSIX에서 UTC와의 차이 (초 단위)
+#endif
+    // 4. time_t에 KST 오프셋(9시간) 더하기
+    const long KST_OFFSET_SECONDS = 9 * 60 * 60; // 9시간을 초 단위로
+    time_t kst_time_c = utc_time_c + KST_OFFSET_SECONDS;
+    // 5. KST time_t를 tm 구조체로 변환
+    // gmtime 함수는 항상 UTC를 기준으로 tm 구조체를 채웁니다.
+    // kst_time_c는 이미 UTC+9이므로 gmtime을 사용하면 KST를 정확히 얻을 수 있습니다.
+    tm *tm_kst_ptr = gmtime(&kst_time_c);
+    if (tm_kst_ptr == nullptr) {
+        cerr << "오류: KST 시간 변환 실패." << endl;
+        return "";
+    }
+    tm tm_kst = *tm_kst_ptr; // 포인터가 가리키는 값 복사 (정적 버퍼 사용 문제 우회)
+    // 6. tm 구조체와 밀리초를 사용하여 최종 KST 문자열 포맷팅
+    char buffer[100]; // 출력 버퍼
+    // strftime을 사용하여 년월일 시분초 부분 포맷팅
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &tm_kst);
+    // 밀리초 부분을 문자열에 추가 (stringstream 사용)
+    stringstream ss;
+    ss << buffer << "." << setfill('0') << setw(3) << millisecond << "KST";
+    return ss.str();
+}
+
 // DB 테이블 생성
 void create_table(SQLite::Database& db) {
     db.exec("CREATE TABLE IF NOT EXISTS detections ("
