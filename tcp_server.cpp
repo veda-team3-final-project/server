@@ -27,6 +27,9 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
     printNowTimeKST();
     cout << " [Thread " << std::this_thread::get_id() << "] 클라이언트 처리 시작." << endl;
 
+    create_table_detections(db);
+    create_table_lines(db);
+
     while (true) {
         uint32_t net_len;
         if (!recvAll(client_socket, reinterpret_cast<char*>(&net_len), sizeof(net_len))) {
@@ -49,7 +52,9 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
             printNowTimeKST();
             cout << " [Thread " << std::this_thread::get_id() << "] 수신 성공:\n" << received_json.dump(2) << endl;
 
+            string json_string;
             if (received_json.value("request_id", -1) == 1) {
+                // 클라이언트의 이미지&텍스트 요청(select) 신호
                 string start_ts = received_json["data"].value("start_timestamp", "");
                 string end_ts = received_json["data"].value("end_timestamp", "");
                 
@@ -73,7 +78,103 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                     data_array.push_back(d_obj);
                 }
                 root["data"] = data_array;
-                string json_string = root.dump();
+                json_string = root.dump();
+                
+                uint32_t res_len = json_string.length();
+                uint32_t net_res_len = htonl(res_len);
+                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                
+                cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
+            } 
+            
+            else if(received_json.value("type", "") == "send_coordinates"){
+                // 클라이언트의 가상 라인 좌표값 - 도트 매트릭스 매핑 요청(insert) 신호
+                string timestampName = received_json.value("timestamp", "");
+                int x1 = received_json["coordinates"].value("x1", -1);
+                int y1 = received_json["coordinates"].value("y1", -1);
+                int x2 = received_json["coordinates"].value("x2", -1);
+                int y2 = received_json["coordinates"].value("y2", -1);
+
+                bool mappingSuccess;
+                // --- DB 접근 시 Mutex로 보호 ---
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
+                    mappingSuccess = insert_data_lines(db,timestampName,x1,y1,x2,y2);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                }
+                // --- 보호 끝 ---
+
+                json root;
+                root["request_id"] = 11;
+                root["mapping_success"] = (mappingSuccess == true)?1:0;
+                json_string = root.dump();
+                
+                uint32_t res_len = json_string.length();
+                uint32_t net_res_len = htonl(res_len);
+                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
+
+            } 
+            
+            else if(received_json.value("request_id", -1) == 3){
+                // 클라이언트의 가상 라인 좌표값 요청(select) 신호
+                
+                vector<CrossLine> lines;
+                // --- DB 접근 시 Mutex로 보호 ---
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
+                    lines = select_all_data_lines(db);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
+                }
+                // --- 보호 끝 ---
+
+                json root;
+                root["request_id"] = 12;
+                json data_array = json::array();
+                for (const auto& line : lines) {
+                    json d_obj;
+                    d_obj["name"] = line.name;
+                    d_obj["x1"] = line.x1;
+                    d_obj["y1"] = line.y1;
+                    d_obj["x2"] = line.x2;
+                    d_obj["y2"] = line.y2;
+                    d_obj["mode"] = line.mode;
+                    d_obj["right_matrix_num"] = line.rightMatrixNum;
+                    d_obj["left_matrix_num"] = line.leftMatrixNum;
+                    data_array.push_back(d_obj);
+                }
+                root["data"] = data_array;
+                json_string = root.dump();
+                
+                uint32_t res_len = json_string.length();
+                uint32_t net_res_len = htonl(res_len);
+                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
+            } 
+            
+            else if(received_json.value("request_id", -1) == 4){
+                // 클라이언트에게 보낼 라인 삭제 신호
+                string deleteName = received_json["data"].value("name","");
+
+                bool deleteSuccess;
+                // --- DB 접근 시 Mutex로 보호 ---
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
+                    deleteSuccess = delete_data_lines(db,deleteName);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
+                }
+                // --- 보호 끝 ---
+
+                json root;
+                root["request_id"] = 13;
+                root["delete_success"] = (deleteSuccess==true)?1:0;
+                json_string = root.dump();
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
@@ -81,6 +182,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 sendAll(client_socket, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             }
+
+            cout << "송신 성공 : (" << json_string.size() << " 바이트):\n" << json_string.substr(0,100) << " # 이후 데이터 출력 생략"<< endl;
         } catch (const json::parse_error& e) {
             cerr << "[Thread " << std::this_thread::get_id() << "] JSON 파싱 에러: " << e.what() << endl;
         }

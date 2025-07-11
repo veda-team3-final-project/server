@@ -20,12 +20,31 @@ struct Detection{
     string timestamp;
 };
 
+struct CrossLine{
+    string name;
+    int x1;
+    int y1;
+    int x2;
+    int y2;
+    string mode;
+    int leftMatrixNum;
+    int rightMatrixNum;
+};
+
 void create_table_detections(SQLite::Database& db);
 
-void insert_data_detections(SQLite::Database& db, vector<unsigned char> image, string timestamp);
+bool insert_data_detections(SQLite::Database& db, vector<unsigned char> image, string timestamp);
 
 vector<Detection> select_data_for_timestamp_range_detections(SQLite::Database& db, string startTimestamp, string endTimestamp);
 
 void delete_all_data_detections(SQLite::Database& db);
 
-// void create_table_lines(SQLite::Database& db);
+void create_table_lines(SQLite::Database& db);
+
+bool insert_data_lines(SQLite::Database& db, string name, int x1, int y1, int x2, int y2);
+
+vector<CrossLine> select_all_data_lines(SQLite::Database& db);
+
+bool delete_data_lines(SQLite::Database& db, string name);
+
+void delete_all_data_lines(SQLite::Database& db);
