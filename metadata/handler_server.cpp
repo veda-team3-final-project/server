@@ -713,7 +713,8 @@ bool analyze_vehicle_threat(
 
             if (!risk_detected) {
                 string timestamp = extract_timestamp(time_source_block);
-                capture_and_store(timestamp);
+                string kstTimestamp = utcToKstString(timestamp);
+                capture_and_store(kstTimestamp);
                 risk_detected = true;
             }
         } else {
@@ -817,7 +818,8 @@ void metadata_thread() {
 
                     if (risk) {
                         string timestamp = extract_timestamp(block);
-                        capture_and_store(timestamp);
+                        string kstTimestamp = utcToKstString(timestamp);
+                        capture_and_store(kstTimestamp);
                     } else {
                         cout << "[DEBUG] 이동 중인 차량 없음 또는 위험 조건 미충족 → 캡처 생략됨" << endl;
                     }
