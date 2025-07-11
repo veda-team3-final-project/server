@@ -9,6 +9,8 @@
 #include <ctime>
 #include <iomanip>
 #include <cstdint> // uint32_t
+#include <thread>
+#include <mutex>
 
 // POSIX 소켓 API 관련 헤더
 #include <sys/socket.h> // socket, bind, listen, accept
@@ -27,7 +29,7 @@
 using namespace std;
 using json = nlohmann::json;
 
-const int PORT = 8080;
+const int PORT = 8090;
 
 string base64_encode(const vector<unsigned char>& in);
 
