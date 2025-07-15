@@ -11,6 +11,7 @@
 #include <cstdint> // uint32_t
 #include <thread>
 #include <mutex>
+#include <stdlib.h>
 
 // POSIX 소켓 API 관련 헤더
 #include <sys/socket.h> // socket, bind, listen, accept
@@ -18,10 +19,13 @@
 #include <unistd.h>     // close
 #include <arpa/inet.h>  // inet_ntoa
 
+#include <curl/curl.h>
+
 // 오류 처리를 위한 추가 헤더
 #include <cstring>    // memset, strerror
 #include <cerrno>     // errno
 #include <system_error>  // strerror
+#include <stdexcept>
 
 // json 처리를 위한 외부 헤더파일
 #include "json.hpp"

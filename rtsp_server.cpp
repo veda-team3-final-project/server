@@ -29,7 +29,7 @@ void rtsp_run(int argc, char *argv[]){
 
     // RTSP 수신 & 송신 파이프라인 생성
     const char *pipeline_description =
-    "rtspsrc location=rtsp://admin:admin123%40@192.168.0.46:554/0/onvif/profile2/media.smp ! " // 엣지 디바이스 Pi 주소 수정 필요, latency : 버퍼링 지연 시간 결정
+    "rtspsrc location=rtsp://admin:admin123%40@192.168.0.137:554/0/onvif/profile2/media.smp ! " // 엣지 디바이스 Pi 주소 수정 필요, latency : 버퍼링 지연 시간 결정
     "rtph264depay ! " // RTP 패킷 -> H.264 비디오 데이터 추출(depacketize)
     "h264parse ! " // H.264 비디오 데이터 파싱
     "rtph264pay name=pay0 pt=96"; // 비디오 데이터 -> RTP 패킷화
