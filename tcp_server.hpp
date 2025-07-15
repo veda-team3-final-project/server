@@ -30,6 +30,12 @@
 // json 처리를 위한 외부 헤더파일
 #include "json.hpp"
 
+// OpenSSL 관련 헤더
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+extern SSL_CTX* ssl_ctx;
+
 using namespace std;
 using json = nlohmann::json;
 
@@ -44,3 +50,10 @@ bool recvAll(int fd, char* buffer, size_t len);
 ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags);
 
 void printNowTimeKST();
+
+// SSL 초기화 및 정리 함수
+
+bool init_openssl();
+void cleanup_openssl();
+SSL_CTX* create_ssl_context();
+void configure_ssl_context(SSL_CTX* ctx);
