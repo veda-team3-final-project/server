@@ -6,6 +6,8 @@
 #include <mutex>
 #include <cstdio>
 
+using namespace std;
+
 // 구조체 정의
 struct Point {
     float x;

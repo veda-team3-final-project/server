@@ -184,7 +184,7 @@ bool fetch_line_configuration() {
     }
     
     // URL 설정
-    curl_easy_setopt(curl, CURLOPT_URL, "https://192.168.0.46/opensdk/WiseAI/configuration/linecrossing");
+    curl_easy_setopt(curl, CURLOPT_URL, "https://192.168.0.137/opensdk/WiseAI/configuration/linecrossing");
     
     // 응답 데이터 콜백
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -204,7 +204,7 @@ bool fetch_line_configuration() {
     headers = curl_slist_append(headers, "Accept-Language: ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7");
     headers = curl_slist_append(headers, "Connection: keep-alive");
     headers = curl_slist_append(headers, "Cookie: TRACKID=0842ca6f0d90294ea7de995c40a4aac6");
-    headers = curl_slist_append(headers, "Referer: https://192.168.0.46/home/setup/opensdk/html/WiseAI/index.html");
+    headers = curl_slist_append(headers, "Referer: https://192.168.0.137/home/setup/opensdk/html/WiseAI/index.html");
     headers = curl_slist_append(headers, "Sec-Fetch-Dest: empty");
     headers = curl_slist_append(headers, "Sec-Fetch-Mode: cors");
     headers = curl_slist_append(headers, "Sec-Fetch-Site: same-origin");
@@ -418,7 +418,7 @@ void capture_and_store(const string& timestamp) {
     replace(safe_time.begin(), safe_time.end(), ':', '-');
     string filename = safe_time + ".jpg";
 
-    string cmd = "ffmpeg -y -rtsp_transport tcp -i rtsp://admin:admin123@192.168.0.46:554/0/onvif/profile2/media.smp "
+    string cmd = "ffmpeg -y -rtsp_transport tcp -i rtsp://admin:admin123@192.168.0.137:554/0/onvif/profile2/media.smp "
                  "-frames:v 1 -q:v 2 -update true " + filename + " > /dev/null 2>&1";
     system(cmd.c_str());
 
@@ -772,7 +772,7 @@ bool is_any_vehicle_moving(const string& event_block, const string& frame_block,
 // ffmpeg 메타데이터 처리 루프
 void metadata_thread() {
     const string cmd =
-        "ffmpeg -i rtsp://admin:admin123@192.168.0.46:554/0/onvif/profile2/media.smp "
+        "ffmpeg -i rtsp://admin:admin123@192.168.0.137:554/0/onvif/profile2/media.smp "
         "-map 0:1 -f data - 2>/dev/null";
 
     FILE* pipe = popen(cmd.c_str(), "r");
