@@ -184,7 +184,7 @@ bool fetch_line_configuration() {
     }
     
     // URL 설정
-    curl_easy_setopt(curl, CURLOPT_URL, "https://192.168.0.46/opensdk/WiseAI/configuration/linecrossing");
+    curl_easy_setopt(curl, CURLOPT_URL, "https://192.168.0.137/opensdk/WiseAI/configuration/linecrossing");
     
     // 응답 데이터 콜백
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -418,7 +418,7 @@ void capture_and_store(const string& timestamp) {
     replace(safe_time.begin(), safe_time.end(), ':', '-');
     string filename = safe_time + ".jpg";
 
-    string cmd = "ffmpeg -y -rtsp_transport tcp -i rtsp://admin:admin123@192.168.0.46:554/0/onvif/profile2/media.smp "
+    string cmd = "ffmpeg -y -rtsp_transport tcp -i rtsp://admin:admin123@192.168.0.137:554/0/onvif/profile2/media.smp "
                  "-frames:v 1 -q:v 2 -update true " + filename + " > /dev/null 2>&1";
     system(cmd.c_str());
 
@@ -463,11 +463,13 @@ bool contains_frame_block(const string& block) {
 }
 
 // 라인크로싱 이벤트 블럭인지 확인하고 ObjectId와 RuleName을 추출하는 함수
-bool is_linecrossing_event(const string& block, string& object_id, string& rule_name) {
+// 정상적인 ObjectId와 RuleName이 추출되면 true를 반환
+// 그렇지 않으면 false를 반환
+bool is_linecrossing_event(const string& event_block, string& object_id, string& rule_name) {
     // [1] Topic 추출
     regex topic_regex("<wsnt:Topic[^>]*>([^<]*)</wsnt:Topic>");
     smatch topic_match;
-    if (!regex_search(block, topic_match, topic_regex)) {
+    if (!regex_search(event_block, topic_match, topic_regex)) {
         return false;
     }
 
@@ -483,13 +485,13 @@ bool is_linecrossing_event(const string& block, string& object_id, string& rule_
     regex state_regex("<tt:SimpleItem Name=\"State\" Value=\"true\"");
 
     smatch match;
-    bool id_ok = regex_search(block, match, id_regex);
+    bool id_ok = regex_search(event_block, match, id_regex);
     if (id_ok) object_id = match[1];
 
-    bool rule_ok = regex_search(block, match, rule_regex);
+    bool rule_ok = regex_search(event_block, match, rule_regex);
     if (rule_ok) rule_name = match[1];
 
-    bool state_ok = regex_search(block, match, state_regex);
+    bool state_ok = regex_search(event_block, match, state_regex);
 
     if (id_ok && rule_ok && state_ok) {
         cout << "[DEBUG] LineCrossing 이벤트 확인됨 → ObjectId=" << object_id
@@ -500,7 +502,7 @@ bool is_linecrossing_event(const string& block, string& object_id, string& rule_
              << "ObjectId:" << (id_ok ? "O" : "X") << ", "
              << "RuleName:" << (rule_ok ? "O" : "X") << ", "
              << "State:true:" << (state_ok ? "O" : "X") << endl;
-        cout << "[DEBUG] block 내용:\n" << block << "\n";
+        cout << "[DEBUG] block 내용:\n" << event_block << "\n";
         return false;
     }
 }
@@ -508,37 +510,46 @@ bool is_linecrossing_event(const string& block, string& object_id, string& rule_
 
 
 // 설정값
-constexpr float direction_threshold = 0.65f;    // 차량 방향 판단을 위한 코사인 유사도 임계값
-constexpr float dist_threshold = 10.0f;         // 차량 이동 판단을 위한 거리 임계값
+constexpr float dist_threshold = 10.0f;         // 이동 판단을 위한 거리 임계값
+
+constexpr float position_threshold = 0.65f;    // 차량 위치 판단을 위한 코사인 유사도 임계값, 해당 값보다 작아야 위험
+constexpr float direction_threshold = 0.45f;    // 차량 방향 판단을 위한 코사인 유사도 임계값, 해당 값보다 커야 위험
 
 // 차량 이동 경로 이력 저장 (최근 N프레임)
-const int HISTORY_SIZE = 2;
+const int HISTORY_SIZE = 3;
 unordered_map<int, deque<Point>> trajectory_history;
 
 // 인간 이동 경로 이력 저장 (최근 N프레임)
-const int HUMAN_HISTORY_SIZE = 2;
+const int HUMAN_HISTORY_SIZE = 3;
 unordered_map<int, deque<Point>> human_history;
 
+// 인간 위치 업데이트
 unordered_map<int, Point> update_human_positions(const string& frame_block, bool& frame_logged) {
     unordered_map<int, Point> current_human_centers;
 
+    // frame_block에서 인간 객체 검색
     regex human_regex("<tt:Object ObjectId=\"(\\d+)\">[\\s\\S]*?<tt:Type[^>]*?>Human</tt:Type>[\\s\\S]*?<tt:CenterOfGravity x=\"([\\d.]+)\" y=\"([\\d.]+)\"");
     auto human_begin = sregex_iterator(frame_block.begin(), frame_block.end(), human_regex);
 
     for (auto it = human_begin; it != sregex_iterator(); ++it) {
+        // 현재 프레임 내에 감지된 인간 객체의 ID와 중심 좌표 추출
         int human_id = stoi((*it)[1]);
         Point cog = {stof((*it)[2]), stof((*it)[3])};
         current_human_centers[human_id] = cog;
-
+        
+        // 현재 감지된 인간 객체가 이전에 감지된 적이 있는지 확인
         bool is_new = human_history.find(human_id) == human_history.end();
         bool is_updated = false;
 
+        // 이전에 감지된 적이 있다면, 이동 거리 계산하여 로그에 업데이트
+        // 일정 이상 움직이지 않았으면 로그에 업데이트하지 않음
         if (!is_new && !human_history[human_id].empty()) {
             const Point& prev = human_history[human_id].back();
             float dx = cog.x - prev.x;
             float dy = cog.y - prev.y;
             float distance = sqrt(dx * dx + dy * dy);
-            if (distance >= 50.0f) is_updated = true;
+            // 일정 픽셀 이동 했으면 업데이트
+            if (distance >= dist_threshold) is_updated = true;
         }
 
         human_history[human_id].push_back(cog);
@@ -554,6 +565,7 @@ unordered_map<int, Point> update_human_positions(const string& frame_block, bool
         }
     }
 
+    // 이전에 감지된 인간 객체 중 현재 프레임에 없는 객체는 제거하고 로그에 출력
     for (auto it = human_history.begin(); it != human_history.end(); ) {
         if (current_human_centers.find(it->first) == current_human_centers.end()) {
             if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
@@ -565,6 +577,62 @@ unordered_map<int, Point> update_human_positions(const string& frame_block, bool
     }
 
     return current_human_centers;
+}
+
+// 차량 위치 업데이트
+unordered_map<int, Point> update_vehicle_positions(const string& frame_block, bool& frame_logged) {
+    unordered_map<int, Point> current_vehicle_centers;
+
+    // frame_block에서 차량 객체 검색
+    regex vehicle_regex("<tt:Object ObjectId=\"(\\d+)\">[\\s\\S]*?<tt:Type[^>]*?>Vehicle</tt:Type>[\\s\\S]*?<tt:CenterOfGravity x=\"([\\d.]+)\" y=\"([\\d.]+)\"");
+    auto begin = sregex_iterator(frame_block.begin(), frame_block.end(), vehicle_regex);
+
+    for (auto it = begin; it != sregex_iterator(); ++it) {
+        // 현재 프레임 내에 감지된 차량 객체의 ID와 중심 좌표 추출
+        int vehicle_id = stoi((*it)[1]);
+        Point cog = {stof((*it)[2]), stof((*it)[3])};
+        current_vehicle_centers[vehicle_id] = cog;
+        
+        // 현재 감지된 차량 객체가 이전에 감지된 적이 있는지 확인
+        bool is_new = trajectory_history.find(vehicle_id) == trajectory_history.end();
+        bool is_updated = false;
+        
+        // 이전에 감지된 적이 있다면, 이동 거리 계산하여 로그에 업데이트
+        // 일정 이상 움직이지 않았으면 로그에 업데이트하지 않음
+        if (!is_new && !trajectory_history[vehicle_id].empty()) {
+            const Point& prev = trajectory_history[vehicle_id].back();
+            float dx = cog.x - prev.x;
+            float dy = cog.y - prev.y;
+            float distance = sqrt(dx * dx + dy * dy);
+            // 일정 픽셀 이동 했으면 업데이트
+            if (distance >= dist_threshold) is_updated = true;
+        }
+
+        trajectory_history[vehicle_id].push_back(cog);
+        if (trajectory_history[vehicle_id].size() > HISTORY_SIZE)
+            trajectory_history[vehicle_id].pop_front();
+
+        if (is_new) {
+            if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
+            cout << "[Vehicle] " << vehicle_id << " appear {x=" << cog.x << ", y=" << cog.y << "}" << endl;
+        } else if (is_updated) {
+            if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
+            cout << "[Vehicle] " << vehicle_id << " {x=" << cog.x << ", y=" << cog.y << "}" << endl;
+        }
+    }
+
+    // 이전에 감지된 차량 객체 중 현재 프레임에 없는 객체는 제거하고 로그에 출력
+    for (auto it = trajectory_history.begin(); it != trajectory_history.end(); ) {
+        if (current_vehicle_centers.find(it->first) == current_vehicle_centers.end()) {
+            if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
+            cout << "[Vehicle] " << it->first << " disappear" << endl;
+            it = trajectory_history.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    return current_vehicle_centers;
 }
 
 
@@ -605,54 +673,6 @@ bool estimate_human_vector(const string& event_block, Point& human_vec, Point& h
 }
 
 
-unordered_map<int, Point> update_vehicle_positions(const string& frame_block, bool& frame_logged) {
-    unordered_map<int, Point> current_vehicle_centers;
-
-    regex vehicle_regex("<tt:Object ObjectId=\"(\\d+)\">[\\s\\S]*?<tt:Type[^>]*?>Vehicle</tt:Type>[\\s\\S]*?<tt:CenterOfGravity x=\"([\\d.]+)\" y=\"([\\d.]+)\"");
-    auto begin = sregex_iterator(frame_block.begin(), frame_block.end(), vehicle_regex);
-
-    for (auto it = begin; it != sregex_iterator(); ++it) {
-        int vehicle_id = stoi((*it)[1]);
-        Point cog = {stof((*it)[2]), stof((*it)[3])};
-        current_vehicle_centers[vehicle_id] = cog;
-
-        bool is_new = trajectory_history.find(vehicle_id) == trajectory_history.end();
-        bool is_updated = false;
-
-        if (!is_new && !trajectory_history[vehicle_id].empty()) {
-            const Point& prev = trajectory_history[vehicle_id].back();
-            float dx = cog.x - prev.x;
-            float dy = cog.y - prev.y;
-            float distance = sqrt(dx * dx + dy * dy);
-            if (distance >= 50.0f) is_updated = true;
-        }
-
-        trajectory_history[vehicle_id].push_back(cog);
-        if (trajectory_history[vehicle_id].size() > HISTORY_SIZE)
-            trajectory_history[vehicle_id].pop_front();
-
-        if (is_new) {
-            if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
-            cout << "[Vehicle] " << vehicle_id << " appear {x=" << cog.x << ", y=" << cog.y << "}" << endl;
-        } else if (is_updated) {
-            if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
-            cout << "[Vehicle] " << vehicle_id << " {x=" << cog.x << ", y=" << cog.y << "}" << endl;
-        }
-    }
-
-    for (auto it = trajectory_history.begin(); it != trajectory_history.end(); ) {
-        if (current_vehicle_centers.find(it->first) == current_vehicle_centers.end()) {
-            if (!frame_logged) { cout << "frame update!" << endl; frame_logged = true; }
-            cout << "[Vehicle] " << it->first << " disappear" << endl;
-            it = trajectory_history.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    return current_vehicle_centers;
-}
-
 bool analyze_vehicle_threat(
     const unordered_map<int, Point>& current_vehicle_centers,
     const Point& human_vec,
@@ -664,9 +684,16 @@ bool analyze_vehicle_threat(
     bool risk_detected = false;
     bool has_moving_vehicle = false;  // 이동 중인 차량 존재 여부
 
+    // 추가된 디버그 로그: 함수 시작 및 분석할 차량 수 출력
+    cout << "[DEBUG] analyze_vehicle_threat: " << current_vehicle_centers.size() << "개의 차량 분석 시작." << endl;
+
     for (const auto& [vehicle_id, cog] : current_vehicle_centers) {
         const auto& history = trajectory_history[vehicle_id];
-        if (history.size() < 2) continue;
+        if (history.size() < 2) {
+            // 추가된 디버그 로그: 이동 이력이 부족한 경우
+            cout << "[DEBUG] 차량 ID=" << vehicle_id << ": 이동 이력 부족 (size=" << history.size() << "), 건너뜀." << endl;
+            continue;
+        }
 
         // 차량 벡터 계산 (과거 평균 위치 기준)
         float sum_x = 0.0f, sum_y = 0.0f;
@@ -680,7 +707,11 @@ bool analyze_vehicle_threat(
 
         // 이동량이 충분한 경우만 판단
         float dist = sqrt(vehicle_vec.x * vehicle_vec.x + vehicle_vec.y * vehicle_vec.y);
-        if (dist <= dist_threshold) continue;
+        if (dist <= dist_threshold) {
+            // 추가된 디버그 로그: 이동 거리가 임계값 이하인 경우
+            cout << "[DEBUG] 차량 ID=" << vehicle_id << ": 이동 거리(" << dist << ")가 임계값(" << dist_threshold << ") 이하, 정지 상태로 간주." << endl;
+            continue;
+        }
 
         has_moving_vehicle = true;  // 이동 중인 차량 확인
 
@@ -725,10 +756,12 @@ bool analyze_vehicle_threat(
     }
 
     // 위험 차량이 없을 경우 디버그 로그 추가
-    if (!risk_detected) {
-        cout << "[DEBUG] 이동 중인 차량 없음 또는 위험 조건 미충족 → 캡처 생략됨" << endl;
+    // 수정된 디버그 로그: 분석 결과를 더 명확하게 출력
+    if (!risk_detected && !current_vehicle_centers.empty()) {
         if (!has_moving_vehicle) {
-            cout << "이동 중인 차량이 없습니다" << endl;
+            cout << "[DEBUG] 분석 결과: 감지된 차량이 있지만, 이동 중인 차량이 없습니다. (캡처 생략)" << endl;
+        } else {
+            cout << "[DEBUG] 분석 결과: 이동 중인 차량은 있으나, 위험 조건에 부합하지 않습니다. (캡처 생략)" << endl;
         }
     }
 
@@ -757,6 +790,12 @@ bool is_any_vehicle_moving(const string& event_block, const string& frame_block,
 
     // [3] 차량 위치 갱신 + 출력
     unordered_map<int, Point> current_vehicles = update_vehicle_positions(frame_block, frame_logged);
+    
+    // 추가된 디버그 로그: 감지된 차량 수 확인
+    cout << "[DEBUG] is_any_vehicle_moving: 감지된 차량 수: " << current_vehicles.size() << endl;
+    if (current_vehicles.empty()) {
+        cout << "[DEBUG] 현재 프레임에서 감지된 차량이 없습니다." << endl;
+    }
 
     // [4] 차량 이동 방향과 사람 벡터 비교하여 위험 판단
     bool risk = analyze_vehicle_threat(current_vehicles, human_vec, human_center, rule_name,
@@ -772,7 +811,7 @@ bool is_any_vehicle_moving(const string& event_block, const string& frame_block,
 // ffmpeg 메타데이터 처리 루프
 void metadata_thread() {
     const string cmd =
-        "ffmpeg -i rtsp://admin:admin123@192.168.0.46:554/0/onvif/profile2/media.smp "
+        "ffmpeg -i rtsp://admin:admin123@192.168.0.137:554/0/onvif/profile2/media.smp "
         "-map 0:1 -f data - 2>/dev/null";
 
     FILE* pipe = popen(cmd.c_str(), "r");
@@ -816,6 +855,7 @@ void metadata_thread() {
                     string direction_info;
                     bool risk = is_any_vehicle_moving(block, current_frame_block, rule_name, direction_info);
 
+                    // 수정: 캡처 로직은 analyze_vehicle_threat 함수 내부에서 이미 처리되므로 중복 호출 제거
                     if (risk) {
                         string timestamp = extract_timestamp(block);
                         string kstTimestamp = utcToKstString(timestamp);
