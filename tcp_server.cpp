@@ -33,7 +33,7 @@ SSL_CTX* create_ssl_context() {
 
 // SSL 컨텍스트 설정
 void configure_ssl_context(SSL_CTX* ctx) {
-    if (SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM) <= 0) {
+    if (SSL_CTX_use_certificate_file(ctx, "fullchain.crt", SSL_FILETYPE_PEM) <= 0) {
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
@@ -401,7 +401,7 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
 
     while (true) {
         uint32_t net_len;
-        if (!recvAll(client_socket, reinterpret_cast<char*>(&net_len), sizeof(net_len))) {
+        if (!recvAll(ssl, reinterpret_cast<char*>(&net_len), sizeof(net_len))) {
             break; 
         }
 
@@ -412,7 +412,7 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
         }
 
         vector<char> json_buffer(json_len);
-        if (!recvAll(client_socket, json_buffer.data(), json_len)) {
+        if (!recvAll(ssl, json_buffer.data(), json_len)) {
             break;
         }
 
@@ -451,8 +451,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             } 
@@ -490,8 +490,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
 
             } 
@@ -532,8 +532,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             } 
             
@@ -560,8 +560,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             }
 
@@ -590,8 +590,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             } 
             
@@ -620,8 +620,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             }
 
@@ -744,44 +744,44 @@ ssize_t sendAll(SSL* ssl, const char* buffer, size_t len, int flags) {
 }
 
 // 일반 소켓 버전의 송수신 함수
-bool recvAll(int socket_fd, char* buffer, size_t len) {
-    size_t total_received = 0;
-    while (total_received < len) {
-        ssize_t bytes_received = recv(socket_fd, buffer + total_received, len - total_received, 0);
+// bool recvAll(int socket_fd, char* buffer, size_t len) {
+//     size_t total_received = 0;
+//     while (total_received < len) {
+//         ssize_t bytes_received = recv(socket_fd, buffer + total_received, len - total_received, 0);
         
-        if (bytes_received == -1) {
-            if (errno == EINTR) continue;
-            cerr << "recv 에러: " << strerror(errno) << endl;
-            return false;
-        }
-        if (bytes_received == 0) {
-            cerr << "데이터 수신 중 클라이언트 연결 종료" << endl;
-            return false;
-        }
-        total_received += bytes_received;
-    }
-    return true;
-}
+//         if (bytes_received == -1) {
+//             if (errno == EINTR) continue;
+//             cerr << "recv 에러: " << strerror(errno) << endl;
+//             return false;
+//         }
+//         if (bytes_received == 0) {
+//             cerr << "데이터 수신 중 클라이언트 연결 종료" << endl;
+//             return false;
+//         }
+//         total_received += bytes_received;
+//     }
+//     return true;
+// }
 
-ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags) {
-    size_t total_sent = 0;
-    while (total_sent < len) {
-        ssize_t bytes_sent = send(socket_fd, buffer + total_sent, len - total_sent, flags);
+// ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags) {
+//     size_t total_sent = 0;
+//     while (total_sent < len) {
+//         ssize_t bytes_sent = send(socket_fd, buffer + total_sent, len - total_sent, flags);
 
-        if (bytes_sent == -1) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return -1;
-        }
+//         if (bytes_sent == -1) {
+//             if (errno == EINTR) {
+//                 continue;
+//             }
+//             return -1;
+//         }
 
-        if (bytes_sent == 0) {
-            return total_sent;
-        }
-        total_sent += bytes_sent;
-    }
-    return total_sent;
-}
+//         if (bytes_sent == 0) {
+//             return total_sent;
+//         }
+//         total_sent += bytes_sent;
+//     }
+//     return total_sent;
+// }
 
 void printNowTimeKST(){
     // 한국 시간 (KST), 밀리초 포함 출력
