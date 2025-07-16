@@ -489,38 +489,32 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 // 2. 결과를 저장할 벡터
                 vector<CrossLine> crossLines;
                 bool isDuplicated = false;
-                try {
-                    // 3. JSON 문자열 파싱
-                    json j = json::parse(getLines());
+                // 3. JSON 문자열 파싱
+                json j = json::parse(getLines());
 
-                    // 4. 데이터 추출 및 벡터에 추가
-                    // "lineCrossing" 배열의 첫 번째 요소 안에 있는 "line" 배열을 순회
-                    for (const auto& item : j["lineCrossing"][0]["line"]) {
-                        CrossLine cl; // 임시 CrossLine 객체 생성
+                // 4. 데이터 추출 및 벡터에 추가
+                // "lineCrossing" 배열의 첫 번째 요소 안에 있는 "line" 배열을 순회
+                for (const auto& item : j["lineCrossing"][0]["line"]) {
+                    CrossLine cl; // 임시 CrossLine 객체 생성
 
-                        // 각 필드 값 추출
-                        cl.index = item["index"];
-                        if(index == cl.index) {
-                            isDuplicated = true;
-                        }
-                        cl.name = item["name"];
-                        cl.mode = item["mode"];
-
-                        // lineCoordinates 배열에서 좌표 추출
-                        cl.x1 = item["lineCoordinates"][0]["x"];
-                        cl.y1 = item["lineCoordinates"][0]["y"];
-                        cl.x2 = item["lineCoordinates"][1]["x"];
-                        cl.y2 = item["lineCoordinates"][1]["y"];
-
-                        // 완성된 객체를 벡터에 추가
-                        crossLines.push_back(cl);
+                    // 각 필드 값 추출
+                    cl.index = item["index"];
+                    if(index == cl.index) {
+                        isDuplicated = true;
                     }
+                    cl.name = item["name"];
+                    cl.mode = item["mode"];
 
-                } catch (json::parse_error& e) {
-                    // 파싱 중 오류가 발생하면 메시지 출력
-                    cerr << "JSON parsing error: " << e.what() << endl;
-                    return;
+                    // lineCoordinates 배열에서 좌표 추출
+                    cl.x1 = item["lineCoordinates"][0]["x"];
+                    cl.y1 = item["lineCoordinates"][0]["y"];
+                    cl.x2 = item["lineCoordinates"][1]["x"];
+                    cl.y2 = item["lineCoordinates"][1]["y"];
+
+                    // 완성된 객체를 벡터에 추가
+                    crossLines.push_back(cl);
                 }
+
 
                 if(isDuplicated == false){
                     crossLines.push_back(newCrossLine);
@@ -555,27 +549,77 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 // 클라이언트의 감지선 좌표값 요청(select all) 신호 
                 // getLine해서 기존 라인 정보 들고오기
                 // db의 select all해서 라인 정보 들고오기
-                // 불일치되는 부분 db와 보낼 패킷에서 제외
-                // 남는 패킷만 전송
 
-                string get_json_result = getLines();
+                // 불일치되는 부분 
 
-                cout << get_json_result << "\n";
+                // db에는 index로 하나씩 delete 
+                // 패킷은 제외하고 남는 것만 전송
 
-                vector<CrossLine> lines;
+                vector<CrossLine> httpLines;
+                // 3. JSON 문자열 파싱
+                json j = json::parse(getLines());
+
+                // 4. 데이터 추출 및 벡터에 추가
+                // "lineCrossing" 배열의 첫 번째 요소 안에 있는 "line" 배열을 순회
+                for (const auto& item : j["lineCrossing"][0]["line"]) {
+                    CrossLine cl; // 임시 CrossLine 객체 생성
+
+                    // 각 필드 값 추출
+                    cl.index = item["index"];
+                    cl.name = item["name"];
+                    cl.mode = item["mode"];
+
+                    // lineCoordinates 배열에서 좌표 추출
+                    cl.x1 = item["lineCoordinates"][0]["x"];
+                    cl.y1 = item["lineCoordinates"][0]["y"];
+                    cl.x2 = item["lineCoordinates"][1]["x"];
+                    cl.y2 = item["lineCoordinates"][1]["y"];
+
+                    // 완성된 객체를 벡터에 추가
+                    httpLines.push_back(cl);
+                }
+
+                
+
+                vector<CrossLine> dbLines;
                 // --- DB 접근 시 Mutex로 보호 ---
                 {
                     std::lock_guard<std::mutex> lock(db_mutex);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
-                    lines = select_all_data_lines(db);
+                    dbLines = select_all_data_lines(db);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
                 }
                 // --- 보호 끝 ---
 
+                vector<CrossLine> realLines;
+                for(auto httpLine:httpLines){
+                    for(auto dbLine:dbLines){
+                        if(httpLine.index == dbLine.index){
+                            realLines.push_back(dbLine);
+                        }
+                    }
+                }
+
+                // lines 테이블 비우고 실제 CCTV에 있는 가상선으로만 DB 채우기
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삭제 시작 (Lock 획득)" << endl;
+                    delete_all_data_lines(db);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삭제 완료 (Lock 해제)" << endl;
+                }
+                for(auto realLine:realLines){
+                    {
+                        std::lock_guard<std::mutex> lock(db_mutex);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
+                        insert_data_lines(db,realLine.index,realLine.x1,realLine.y1,realLine.x2,realLine.y2,realLine.name,realLine.mode,realLine.leftMatrixNum,realLine.rightMatrixNum);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                    }
+                }
+
                 json root;
                 root["request_id"] = 12;
                 json data_array = json::array();
-                for (const auto& line : lines) {
+                for (const auto& line : realLines) {
                     json d_obj;
                     d_obj["index"] = line.index;
                     d_obj["x1"] = line.x1;
@@ -662,8 +706,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
             else if(received_json.value("request_id", -1) == 6){
                 // 클라이언트 감지선의 수직선 방정식 insert 신호 
                 int index = received_json["data"].value("index", -1);
-                double a = received_json["data"].value("x", -1); // ax+b = 0
-                double b = received_json["data"].value("y", -1);
+                double a = received_json["data"].value("a", -1); // ax+b = 0
+                double b = received_json["data"].value("b", -1);
 
                 VerticalLineEquation verticalLineEquation = {index,a,b};
 
@@ -680,6 +724,39 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 json root;
                 root["request_id"] = 14;
                 root["insert_success"] = (insertSuccess == true)?1:0;
+                json_string = root.dump();
+                
+                uint32_t res_len = json_string.length();
+                uint32_t net_res_len = htonl(res_len);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
+                cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
+            } 
+            
+            else if(received_json.value("request_id", -1) == 7){
+                // 클라이언트 도로기준선 좌표 select all(동기화) 신호
+
+                vector<BaseLineCoordinate> baseLineCoordinates;
+                // --- DB 접근 시 Mutex로 보호 ---
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
+                    baseLineCoordinates = select_all_data_baseLineCoordinates(db);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
+                }
+                // --- 보호 끝 ---
+
+                json root;
+                root["request_id"] = 15;
+                json data_array = json::array();
+                for (const auto& baseLineCoordinate : baseLineCoordinates) {
+                    json d_obj;
+                    d_obj["matrixNum"] = baseLineCoordinate.matrixNum;
+                    d_obj["x"] = baseLineCoordinate.x;
+                    d_obj["y"] = baseLineCoordinate.y;
+                    data_array.push_back(d_obj);
+                }
+                root["data"] = data_array;
                 json_string = root.dump();
                 
                 uint32_t res_len = json_string.length();
