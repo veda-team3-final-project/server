@@ -1,5 +1,60 @@
 #include "tcp_server.hpp" 
 
+/*
+
+OpenSSL 관련
+
+*/
+
+SSL_CTX* ssl_ctx = nullptr;
+
+// SSL 초기화 함수
+bool init_openssl() {
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+    return true;
+}
+
+// SSL 정리 함수
+void cleanup_openssl() {
+    EVP_cleanup();
+}
+
+// SSL 컨텍스트 생성
+SSL_CTX* create_ssl_context() {
+    const SSL_METHOD* method = TLS_server_method();
+    SSL_CTX* ctx = SSL_CTX_new(method);
+    if (!ctx) {
+        perror("SSL 컨텍스트 생성 실패");
+        return nullptr;
+    }
+    return ctx;
+}
+
+// SSL 컨텍스트 설정
+void configure_ssl_context(SSL_CTX* ctx) {
+    if (SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+
+OpenSSL 관련 끝
+
+*/
+
+
+
+
+
+
 // --- 응답 데이터를 저장할 콜백 함수 ---
 // libcurl은 데이터를 작은 청크로 나눠서 이 함수를 여러 번 호출해요.
 // userp 인자는 CURLOPT_WRITEDATA로 설정한 포인터를 받아요.
@@ -319,8 +374,24 @@ string base64_encode(const vector<unsigned char>& in) {
 
 // --- 클라이언트 처리 스레드 함수 ---
 void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex) {
+    // SSL 연결 설정
+    SSL* ssl = SSL_new(ssl_ctx);
+    if (!ssl) {
+        ERR_print_errors_fp(stderr);
+        close(client_socket);
+        return;
+    }
+
+    SSL_set_fd(ssl, client_socket);
+    if (SSL_accept(ssl) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        close(client_socket);
+        return;
+    }
+
     printNowTimeKST();
-    cout << " [Thread " << std::this_thread::get_id() << "] 클라이언트 처리 시작." << endl;
+    cout << " [Thread " << std::this_thread::get_id() << "] SSL 클라이언트 처리 시작." << endl;
 
     create_table_detections(db);
     create_table_lines(db);
@@ -568,6 +639,22 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
 
 // --- 메인 TCP 서버 로직 (수정됨) ---
 int tcp_run() {
+    // OpenSSL 초기화
+    if (!init_openssl()) {
+        cerr << "OpenSSL 초기화 실패" << endl;
+        return -1;
+    }
+
+    // SSL 컨텍스트 생성
+    ssl_ctx = create_ssl_context();
+    if (!ssl_ctx) {
+        cleanup_openssl();
+        return -1;
+    }
+
+    // SSL 컨텍스트 설정
+    configure_ssl_context(ssl_ctx);
+
     SQLite::Database db("server_log.db", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
     cout << "데이터베이스 파일 'server_log.db'에 연결되었습니다.\n";
 
@@ -617,6 +704,46 @@ int tcp_run() {
     return 0;
 }
 
+// SSL 버전의 송수신 함수
+bool recvAll(SSL* ssl, char* buffer, size_t len) {
+    size_t total_received = 0;
+    while (total_received < len) {
+        int bytes_received = SSL_read(ssl, buffer + total_received, len - total_received);
+        
+        if (bytes_received <= 0) {
+            int error = SSL_get_error(ssl, bytes_received);
+            if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+                continue;
+            }
+            ERR_print_errors_fp(stderr);
+            return false;
+        }
+        total_received += bytes_received;
+    }
+    return true;
+}
+
+ssize_t sendAll(SSL* ssl, const char* buffer, size_t len, int flags) {
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        int bytes_sent = SSL_write(ssl, buffer + total_sent, len - total_sent);
+
+        if (bytes_sent <= 0) {
+            int error = SSL_get_error(ssl, bytes_sent);
+            if (error == SSL_ERROR_WANT_WRITE || error == SSL_ERROR_WANT_READ) {
+                continue;
+            }
+            ERR_print_errors_fp(stderr);
+            return -1;
+        }
+
+        total_sent += bytes_sent;
+    }
+
+    return total_sent;
+}
+
+// 일반 소켓 버전의 송수신 함수
 bool recvAll(int socket_fd, char* buffer, size_t len) {
     size_t total_received = 0;
     while (total_received < len) {
@@ -636,34 +763,23 @@ bool recvAll(int socket_fd, char* buffer, size_t len) {
     return true;
 }
 
-ssize_t sendAll(int new_socket, const char* buffer, size_t len, int flags) {
+ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags) {
     size_t total_sent = 0;
     while (total_sent < len) {
-        ssize_t bytes_sent;
-
-        // EINTR 처리를 위해 send 호출을 루프 안에 넣을 수 있습니다.
-        bytes_sent = send(new_socket, buffer + total_sent, len - total_sent, flags);
+        ssize_t bytes_sent = send(socket_fd, buffer + total_sent, len - total_sent, flags);
 
         if (bytes_sent == -1) {
-            // EINTR은 실제 에러가 아니므로, 재시도합니다.
             if (errno == EINTR) {
-                continue; // while 루프의 처음으로 돌아가 send를 다시 시도
+                continue;
             }
-            
-            // 그 외의 에러는 치명적인 오류로 간주하고 -1을 반환합니다.
-            // perror()는 제거하고, 호출자가 errno를 확인하도록 합니다.
             return -1;
         }
 
         if (bytes_sent == 0) {
-            // 연결이 끊어진 경우, 지금까지 보낸 만큼만 반환합니다.
-            // 이 부분은 기존 로직이 합리적이므로 유지합니다.
             return total_sent;
         }
-
         total_sent += bytes_sent;
     }
-
     return total_sent;
 }
 
