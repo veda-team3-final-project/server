@@ -65,6 +65,7 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
 }
 
 string getLines(){
+    
     string response_buffer;
     try {
         CURL *curl_handle; // curl 통신을 위한 핸들
@@ -150,7 +151,7 @@ string getLines(){
     return response_buffer;
 }
 
-string putLines(CrossLine crossLine){
+string putLines(vector<CrossLine> crossLines){
     string response_buffer;
     try {
         CURL *curl_handle; // curl 통신을 위한 핸들
@@ -175,36 +176,40 @@ string putLines(CrossLine crossLine){
         curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
         curl_easy_setopt(curl_handle, CURLOPT_USERPWD, "admin:admin123@");
 
+        
         json curlRoot;
         curlRoot["channel"] = 0;
         curlRoot["enable"] = true;
         json lineArray = json::array();
-        json line1;
-        line1["index"] = crossLine.index;
+        for(const auto& crossLine:crossLines){
+            json line1;
+            line1["index"] = crossLine.index;
 
-        json coodArray = json::array();
-        json cood1;
-        cood1["x"] = crossLine.x1;
-        cood1["y"] = crossLine.y1;
-        coodArray.push_back(cood1);
-        json cood2;
-        cood2["x"] = crossLine.x2;
-        cood2["y"] = crossLine.y2;
-        coodArray.push_back(cood2);
+            json coodArray = json::array();
+            json cood1;
+            cood1["x"] = crossLine.x1;
+            cood1["y"] = crossLine.y1;
+            coodArray.push_back(cood1);
+            json cood2;
+            cood2["x"] = crossLine.x2;
+            cood2["y"] = crossLine.y2;
+            coodArray.push_back(cood2);
 
-        line1["lineCoordinates"] = coodArray;
-        line1["mode"] = crossLine.mode;
-        line1["name"] = crossLine.name;
-        json otfArray = json::array();
-        otfArray.push_back("Person");
-        otfArray.push_back("Vehicle.Bicycle");
-        otfArray.push_back("Vehicle.Car");
-        otfArray.push_back("Vehicle.Motorcycle");
-        otfArray.push_back("Vehicle.Bus");
-        otfArray.push_back("Vehicle.Truck");
-        line1["objectTypeFilter"] = otfArray;
-        // ["Person","Vehicle.Bicycle","Vehicle.Car","Vehicle.Motorcycle","Vehicle.Bus","Vehicle.Truck"]
-        lineArray.push_back(line1);
+            line1["lineCoordinates"] = coodArray;
+            line1["mode"] = crossLine.mode;
+            line1["name"] = crossLine.name;
+            json otfArray = json::array();
+            otfArray.push_back("Person");
+            otfArray.push_back("Vehicle.Bicycle");
+            otfArray.push_back("Vehicle.Car");
+            otfArray.push_back("Vehicle.Motorcycle");
+            otfArray.push_back("Vehicle.Bus");
+            otfArray.push_back("Vehicle.Truck");
+            line1["objectTypeFilter"] = otfArray;
+            // ["Person","Vehicle.Bicycle","Vehicle.Car","Vehicle.Motorcycle","Vehicle.Bus","Vehicle.Truck"]
+            lineArray.push_back(line1);
+        }
+        
         curlRoot["line"] = lineArray;
 
         string insert_json_string = curlRoot.dump();
@@ -459,6 +464,15 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
             
             else if(received_json.value("request_id", 2) == 2){
                 // 클라이언트의 가상 라인 좌표값 - 도트 매트릭스 매핑 요청(insert) 신호
+                // getlines해서 기존 라인정보 들고오기
+                // 기존 라인정보와 새로운 라인정보에 겹치는 라인이 있는 검사
+
+                // 겹치면 
+                // putlines, db insert 수행 X
+                
+                // 겹치지 않으면
+                // putlines에 새로운 라인정보 + 기존 라인정보 추가하고 신호보내기
+                // db에 새로운 라인정보만 추가
 
                 int index = received_json["data"].value("index", -1);
                 int x1 = received_json["data"].value("x1", -1);
@@ -470,35 +484,82 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 int leftMatrixNum = received_json["data"].value("leftMatrixNum", 1);
                 int rightMatrixNum = received_json["data"].value("rightMatrixNum", 2);
 
-                CrossLine crossLine = {index,x1,y1,x2,y2,name,mode,leftMatrixNum,rightMatrixNum};
-                putLines(crossLine);
+                CrossLine newCrossLine = {index, x1, y1, x2, y2, name, mode, leftMatrixNum, rightMatrixNum};
 
-                bool mappingSuccess;
-                // --- DB 접근 시 Mutex로 보호 ---
-                {
-                    std::lock_guard<std::mutex> lock(db_mutex);
-                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
-                    mappingSuccess = insert_data_lines(db,index,x1,y1,x2,y2,name,mode,leftMatrixNum,rightMatrixNum);
-                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                // 2. 결과를 저장할 벡터
+                vector<CrossLine> crossLines;
+                bool isDuplicated = false;
+                try {
+                    // 3. JSON 문자열 파싱
+                    json j = json::parse(getLines());
+
+                    // 4. 데이터 추출 및 벡터에 추가
+                    // "lineCrossing" 배열의 첫 번째 요소 안에 있는 "line" 배열을 순회
+                    for (const auto& item : j["lineCrossing"][0]["line"]) {
+                        CrossLine cl; // 임시 CrossLine 객체 생성
+
+                        // 각 필드 값 추출
+                        cl.index = item["index"];
+                        if(index == cl.index) {
+                            isDuplicated = true;
+                        }
+                        cl.name = item["name"];
+                        cl.mode = item["mode"];
+
+                        // lineCoordinates 배열에서 좌표 추출
+                        cl.x1 = item["lineCoordinates"][0]["x"];
+                        cl.y1 = item["lineCoordinates"][0]["y"];
+                        cl.x2 = item["lineCoordinates"][1]["x"];
+                        cl.y2 = item["lineCoordinates"][1]["y"];
+
+                        // 완성된 객체를 벡터에 추가
+                        crossLines.push_back(cl);
+                    }
+
+                } catch (json::parse_error& e) {
+                    // 파싱 중 오류가 발생하면 메시지 출력
+                    cerr << "JSON parsing error: " << e.what() << endl;
+                    return;
                 }
-                // --- 보호 끝 ---
 
-                json root;
-                root["request_id"] = 11;
-                root["mapping_success"] = (mappingSuccess == true)?1:0;
-                json_string = root.dump();
-                
-                uint32_t res_len = json_string.length();
-                uint32_t net_res_len = htonl(res_len);
-                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(ssl, json_string.c_str(), res_len, 0);
+                if(isDuplicated == false){
+                    crossLines.push_back(newCrossLine);
+                    putLines(crossLines);
+
+                    bool mappingSuccess;
+                    // --- DB 접근 시 Mutex로 보호 ---
+                    {
+                        std::lock_guard<std::mutex> lock(db_mutex);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
+                        mappingSuccess = insert_data_lines(db,index,x1,y1,x2,y2,name,mode,leftMatrixNum,rightMatrixNum);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                    }
+                    // --- 보호 끝 ---
+
+                    json root;
+                    root["request_id"] = 11;
+                    root["mapping_success"] = (mappingSuccess == true)?1:0;
+                    json_string = root.dump();
+                    
+                    uint32_t res_len = json_string.length();
+                    uint32_t net_res_len = htonl(res_len);
+                    sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                    sendAll(ssl, json_string.c_str(), res_len, 0);
+                } 
+   
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
 
             } 
             
             else if(received_json.value("request_id", -1) == 3){
-                
+                // 클라이언트의 감지선 좌표값 요청(select all) 신호 
+                // getLine해서 기존 라인 정보 들고오기
+                // db의 select all해서 라인 정보 들고오기
+                // 불일치되는 부분 db와 보낼 패킷에서 제외
+                // 남는 패킷만 전송
+
                 string get_json_result = getLines();
+
                 cout << get_json_result << "\n";
 
                 vector<CrossLine> lines;
@@ -539,6 +600,9 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
             
             else if(received_json.value("request_id", -1) == 4){
                 // 클라이언트에게 보낼 라인 삭제 신호
+                // db에서 선 삭제
+                // deleteline 호출
+
                 int deleteIndex = received_json["data"].value("index", -1);
 
                 deleteLines(deleteIndex);

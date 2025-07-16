@@ -46,7 +46,7 @@ const int PORT = 8080;
 
 string getLines();
 
-string putLines(CrossLine crossLine);
+string putLines(vector<CrossLine> crossLines);
 
 string deleteLines(int index);
 
