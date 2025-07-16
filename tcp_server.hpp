@@ -36,10 +36,19 @@
 
 extern SSL_CTX* ssl_ctx;
 
+#include "db_management.hpp"
+
+
 using namespace std;
 using json = nlohmann::json;
 
 const int PORT = 8080;
+
+string getLines();
+
+string putLines(CrossLine crossLine);
+
+string deleteLines(int index);
 
 string base64_encode(const vector<unsigned char>& in);
 
