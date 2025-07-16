@@ -111,7 +111,7 @@ bool is_human(const string& block, const string& object_id) {
 
 // 프레임에서 차량 위치 업데이트
 void update_vehicle_positions(const string& frame_block, const deque<string>& frame_cache) {
-    cout << "[DEBUG] Entering update_vehicle_positions()" << endl;
+    //cout << "[DEBUG] Entering update_vehicle_positions()" << endl;
 
     unordered_map<int, bool> seen_vehicles;
 
@@ -172,7 +172,7 @@ void update_vehicle_positions(const string& frame_block, const deque<string>& fr
         }
     }
 
-    cout << "[DEBUG] Exiting update_vehicle_positions()" << endl;
+    //cout << "[DEBUG] Exiting update_vehicle_positions()" << endl;
 }
 
 // 위험 분석 및 경고 로직
