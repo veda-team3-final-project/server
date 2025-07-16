@@ -30,10 +30,18 @@
 // json 처리를 위한 외부 헤더파일
 #include "json.hpp"
 
+#include "db_management.hpp"
+
 using namespace std;
 using json = nlohmann::json;
 
 const int PORT = 8080;
+
+string getLines();
+
+string putLines(CrossLine crossLine);
+
+string deleteLines(int index);
 
 string base64_encode(const vector<unsigned char>& in);
 
