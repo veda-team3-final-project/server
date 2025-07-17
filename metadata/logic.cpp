@@ -36,11 +36,11 @@ struct Line {
 
 // --- 전역 상태 ---
 recursive_mutex data_mutex;
-const string RTSP_URL = "rtsp://admin:admin123@192.168.0.137:554/0/onvif/profile2/media.smp";
+const string RTSP_URL = "rtsp://admin:admin123@@192.168.0.137:554/0/onvif/profile2/media.smp";
 const string DB_FILE = "../server_log.db";
 
 // DB에서 로드될 좌표 및 설정값
-vector<Point> dots;
+vector<tuple<int, Point, int, Point>> base_line_pairs;
 Point dot_center = {0, 0};
 unordered_map<string, Line> rule_lines;
 
@@ -91,38 +91,79 @@ void insert_data(SQLite::Database& db, const vector<unsigned char>& image_data, 
     }
 }
 
+// 점과 점으로 이루어진 두 직선의 교차점 구하는 함수, dot_center 구하기
+bool calculate_intersection(const Point& a1, const Point& a2,
+                            const Point& b1, const Point& b2,
+                            Point& intersection) {
+    float A1 = a2.y - a1.y;
+    float B1 = a1.x - a2.x;
+    float C1 = A1 * a1.x + B1 * a1.y;
+
+    float A2 = b2.y - b1.y;
+    float B2 = b1.x - b2.x;
+    float C2 = A2 * b1.x + B2 * b1.y;
+
+    float det = A1 * B2 - A2 * B1;
+    if (fabs(det) < 1e-5) return false; // 평행
+
+    intersection.x = (B2 * C1 - B1 * C2) / det;
+    intersection.y = (A1 * C2 - A2 * C1) / det;
+    return true;
+}
+
 // DB에서 Dots(보조선) 좌표 로드 및 dot_center 계산
 void load_dots_and_center(SQLite::Database& db) {
-    cout << "[INFO] Loading baseline coordinates from DB..." << endl;
+    cout << "[INFO] Loading baseLines from DB..." << endl;
 
-    const float scale_x = 3840.0f / 960.0f;
-    const float scale_y = 2160.0f / 540.0f;
+    //const float scale_x = 3840.0f / 960.0f;
+    //const float scale_y = 2160.0f / 540.0f;
+    
+    const float scale_x = 1;
+    const float scale_y = 1;
+    base_line_pairs.clear();
 
     try {
-        SQLite::Statement query(db, "SELECT x, y FROM baseLineCoordinates ORDER BY matrixNum LIMIT 4");
-        float total_x = 0, total_y = 0;
+        SQLite::Statement query(db, "SELECT matrixNum1, x1, y1, matrixNum2, x2, y2 FROM baseLines");
 
         while (query.executeStep()) {
-            Point raw_dot = {(float)query.getColumn(0).getInt(), (float)query.getColumn(1).getInt()};
-            Point scaled_dot = { raw_dot.x * scale_x, raw_dot.y * scale_y };
+            int id1 = query.getColumn(0).getInt();
+            Point p1 = {query.getColumn(1).getInt() * scale_x, query.getColumn(2).getInt() * scale_y};
+            int id2 = query.getColumn(3).getInt();
+            Point p2 = {query.getColumn(4).getInt() * scale_x, query.getColumn(5).getInt() * scale_y};
 
-            dots.push_back(scaled_dot);
-            total_x += scaled_dot.x;
-            total_y += scaled_dot.y;
+            base_line_pairs.emplace_back(id1, p1, id2, p2);
 
-            cout << "[DEBUG] Loaded dot (scaled): (" << scaled_dot.x << ", " << scaled_dot.y << ")" << endl;
+            cout << "[DEBUG] Loaded dot pair: " << id1 << "<->" << id2
+                 << " (" << p1.x << "," << p1.y << ") <-> (" << p2.x << "," << p2.y << ")" << endl;
         }
 
-        if (!dots.empty()) {
-            dot_center.x = total_x / dots.size();
-            dot_center.y = total_y / dots.size();
-            cout << "[INFO] Calculated dot_center: (" << dot_center.x << ", " << dot_center.y << ")" << endl;
+        // dot_center 계산
+        if (base_line_pairs.size() >= 2) {
+            Point inter;
+            bool found = calculate_intersection(
+                get<1>(base_line_pairs[0]), get<3>(base_line_pairs[0]),
+                get<1>(base_line_pairs[1]), get<3>(base_line_pairs[1]),
+                inter
+            );
+            if (found) {
+                dot_center = inter;
+            } else {
+                dot_center = {(get<1>(base_line_pairs[0]).x + get<3>(base_line_pairs[0]).x) / 2,
+                              (get<1>(base_line_pairs[0]).y + get<3>(base_line_pairs[0]).y) / 2};
+            }
+        } else if (base_line_pairs.size() == 1) {
+            dot_center = {
+                (get<1>(base_line_pairs[0]).x + get<3>(base_line_pairs[0]).x) / 2,
+                (get<1>(base_line_pairs[0]).y + get<3>(base_line_pairs[0]).y) / 2
+            };
         } else {
-            cerr << "[WARNING] No baseline coordinates found in DB. 'dots' is empty." << endl;
+            cerr << "[WARNING] No baseLines found. dot_center = (0, 0)" << endl;
         }
 
-    } catch (const std::exception& e) {
-        cerr << "[ERROR] Failed to load from 'baseLineCoordinates' table: " << e.what() << endl;
+        cout << "[INFO] Calculated dot_center: (" << dot_center.x << ", " << dot_center.y << ")" << endl;
+
+    } catch (const exception& e) {
+        cerr << "[ERROR] Failed to load baseLines: " << e.what() << endl;
     }
 }
 
@@ -334,9 +375,6 @@ void update_vehicle_positions(const string& frame_block, const deque<string>& fr
 
 // 위험 분석 및 경고 로직
 void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& rule_name, const string& utc_time_str) {
-
-    //cout << "[DEBUG] Entering analyze_risk_and_alert()" << endl;  // mutex 진입 로그
-
     lock_guard<recursive_mutex> lock(data_mutex);
 
     cout << "[DEBUG] Analyzing risk for human_id: " << human_id << " crossing line: " << rule_name << endl;
@@ -373,16 +411,28 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
         const Point& oldest_pos = vehicle_state.history.front();
         const Point& newest_pos = vehicle_state.history.back();
 
-        // 4. 가장 가까운 dot 탐색
-        Point closest_dot = dots[0];
+        // 4. 가장 가까운 dot 쌍 탐색 (양쪽 모두 검사)
+        Point closest_dot;
+        int matched_id = -1;    // 차량과 가장 가까운 dot의 ID
+        int board_id = -1;      // 켜야 하는 dot의 id, 차량과 가까운 dot의 반대쪽 dot
         float min_dist_sq = numeric_limits<float>::max();
-        for (const auto& dot : dots) {
-            float dx = oldest_pos.x - dot.x;
-            float dy = oldest_pos.y - dot.y;
-            float dist_sq = dx * dx + dy * dy;
-            if (dist_sq < min_dist_sq) {
-                min_dist_sq = dist_sq;
-                closest_dot = dot;
+
+        for (const auto& [id1, p1, id2, p2] : base_line_pairs) {
+            float d1 = pow(oldest_pos.x - p1.x, 2) + pow(oldest_pos.y - p1.y, 2);
+            float d2 = pow(oldest_pos.x - p2.x, 2) + pow(oldest_pos.y - p2.y, 2);
+
+            if (d1 < min_dist_sq) {
+                min_dist_sq = d1;
+                closest_dot = p1;
+                matched_id = id1;
+                board_id = id2;
+            }
+
+            if (d2 < min_dist_sq) {
+                min_dist_sq = d2;
+                closest_dot = p2;
+                matched_id = id2;
+                board_id = id1;
             }
         }
 
@@ -408,16 +458,17 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
 
         if (abs(similarity) >= parrallelism_threshold) {
             cout << "\n[ALERT] " << vehicle_id << " 차량이 " << human_id << " 인간을 향해 측면에서 접근 중입니다." << endl;
-            cout << "{" << closest_dot.x << "," << closest_dot.y << "}의 반대편 dotmatrix를 가동합니다." << endl;
+            cout << board_id << " dot matrix를 가동합니다." << endl;
             cout << "(코사인 유사도 : " << similarity << ")\n" << endl;
-            
-            // 화면 캡처 및 DB 저장 함수 호출
+
+            // 화면 캡처 및 DB 저장
             capture_screen_and_save(db, utc_time_str);
         } else {
             cout << "[DEBUG] Step Failed (Vehicle " << vehicle_id << "): Cosine similarity not high enough." << endl;
         }
     }
 }
+
 
 // 코사인 유사도 계산
 float compute_cosine_similarity(const Point& a, const Point& b) {
@@ -518,8 +569,8 @@ int main() {
         load_rule_lines(db);
 
         // 설정값 로드 확인
-        if (dots.empty() || rule_lines.empty()) {
-            cerr << "[FATAL] Failed to load configuration from database. Check 'baseLineCoordinates' and 'lines' tables." << endl;
+        if (base_line_pairs.empty() || rule_lines.empty()) {
+            cerr << "[FATAL] Failed to load configuration from database. Check 'baseLines' and 'lines' tables." << endl;
             return 1;
         }
 
