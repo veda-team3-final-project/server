@@ -399,8 +399,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
 
     create_table_detections(db);
     create_table_lines(db);
-    create_table_baseLineCoordinates(db);
-    create_table_verticalLineEquation(db);
+    create_table_baseLines(db);
+    create_table_verticalLineEquations(db);
    
 
     while (true) {
@@ -637,19 +637,23 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
             }
 
             else if(received_json.value("request_id", -1) == 5){
-                // 클라이언트의 도로기준선 좌표 insert 신호
-                int matrixNum = received_json["data"].value("matrixNum", -1);
-                int x = received_json["data"].value("x", -1);
-                int y = received_json["data"].value("y", -1);
+                // 클라이언트의 도로기준선 insert 신호
+                int index = received_json["data"].value("index",-1);
+                int matrixNum1 = received_json["data"].value("matrixNum1", -1);
+                int x1 = received_json["data"].value("x1", -1);
+                int y1 = received_json["data"].value("y1", -1);
+                int matrixNum2 = received_json["data"].value("matrixNum2", -1);
+                int x2 = received_json["data"].value("x2", -1);
+                int y2 = received_json["data"].value("y2", -1);
 
-                // BaseLineCoordinate baseLineCoordinate = {matrixNum,x,y};
+                BaseLine baseLine = {index, matrixNum1,x1,y1, matrixNum2, x2, y2};
 
                 bool insertSuccess;
                 // --- DB 접근 시 Mutex로 보호 ---
                 {
                     std::lock_guard<std::mutex> lock(db_mutex);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
-                    insertSuccess = insert_data_baseLineCoordinates(db,matrixNum,x,y);
+                    insertSuccess = insert_data_baseLines(db,baseLine);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
                 }
                 // --- 보호 끝 ---
@@ -679,7 +683,7 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 {
                     std::lock_guard<std::mutex> lock(db_mutex);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
-                    insertSuccess = insert_data_verticalLineEquation(db,index,a,b);
+                    insertSuccess = insert_data_verticalLineEquations(db,index,a,b);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
                 }
                 // --- 보호 끝 ---
@@ -697,14 +701,14 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
             } 
             
             else if(received_json.value("request_id", -1) == 7){
-                // 클라이언트 도로기준선 좌표 select all(동기화) 신호
+                // 클라이언트 도로기준선 select all(동기화) 신호
 
-                vector<BaseLineCoordinate> baseLineCoordinates;
+                vector<BaseLine> baseLines;
                 // --- DB 접근 시 Mutex로 보호 ---
                 {
                     std::lock_guard<std::mutex> lock(db_mutex);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
-                    baseLineCoordinates = select_all_data_baseLineCoordinates(db);
+                    baseLines = select_all_data_baseLines(db);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
                 }
                 // --- 보호 끝 ---
@@ -712,11 +716,15 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 json root;
                 root["request_id"] = 15;
                 json data_array = json::array();
-                for (const auto& baseLineCoordinate : baseLineCoordinates) {
+                for (const auto& baseLine : baseLines) {
                     json d_obj;
-                    d_obj["matrixNum"] = baseLineCoordinate.matrixNum;
-                    d_obj["x"] = baseLineCoordinate.x;
-                    d_obj["y"] = baseLineCoordinate.y;
+                    d_obj["index"] = baseLine.index;
+                    d_obj["matrixNum1"] = baseLine.matrixNum1;
+                    d_obj["x1"] = baseLine.x1;
+                    d_obj["y1"] = baseLine.y1;
+                    d_obj["matrixNum2"] = baseLine.matrixNum2;
+                    d_obj["x2"] = baseLine.x2;
+                    d_obj["y2"] = baseLine.y2;
                     data_array.push_back(d_obj);
                 }
                 root["data"] = data_array;

@@ -35,10 +35,14 @@ struct CrossLine{
 };
 
 // 기준선 좌표
-struct BaseLineCoordinate{
-    int matrixNum;
-    int x;
-    int y;
+struct BaseLine{
+    int index;
+    int matrixNum1;
+    int x1;
+    int y1;
+    int matrixNum2;
+    int x2;
+    int y2;
 };
 
 // 수직선 좌표
@@ -67,14 +71,14 @@ bool delete_data_lines(SQLite::Database& db, int indexNum);
 
 bool delete_all_data_lines(SQLite::Database& db);
 
-void create_table_baseLineCoordinates(SQLite::Database& db);
+void create_table_baseLines(SQLite::Database& db);
 
-vector<BaseLineCoordinate> select_all_data_baseLineCoordinates(SQLite::Database& db);
+vector<BaseLine> select_all_data_baseLines(SQLite::Database& db);
 
-bool insert_data_baseLineCoordinates(SQLite::Database& db,int matrixNum, int x,int y );
+bool insert_data_baseLines(SQLite::Database& db,BaseLine baseline);
 
-void create_table_verticalLineEquation(SQLite::Database& db);
+void create_table_verticalLineEquations(SQLite::Database& db);
 
-VerticalLineEquation select_data_verticalLineEquation(SQLite::Database& db, int index);
+VerticalLineEquation select_data_verticalLineEquations(SQLite::Database& db, int index);
 
-bool insert_data_verticalLineEquation(SQLite::Database& db, int index, double a, double b);
+bool insert_data_verticalLineEquations(SQLite::Database& db, int index, double a, double b);
