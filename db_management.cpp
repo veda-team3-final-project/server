@@ -173,52 +173,65 @@ bool delete_all_data_lines(SQLite::Database& db){
 }
 
 ///////////////////////////////////////////////
-// BaseLineCoordinates 테이블
+// BaseLine 테이블
 
-void create_table_baseLineCoordinates(SQLite::Database& db)
+void create_table_baseLines(SQLite::Database& db)
 {
-    db.exec("CREATE TABLE IF NOT EXISTS baseLineCoordinates ("
-        "matrixNum INTEGER PRIMARY KEY, "
-        "x INTEGER NOT NULL, "
-        "y INTEGER NOT NULL)");
-    cout << "'BaseLineCoordinates' 테이블이 준비되었습니다.\n";
+    db.exec("CREATE TABLE IF NOT EXISTS baseLines ("
+        "indexNum INTEGER PRIMARY KEY, " 
+        "matrixNum1 INTEGER NOT NULL, "
+        "x1 INTEGER NOT NULL, "
+        "y1 INTEGER NOT NULL, "
+        "matrixNum2 INTEGER NOT NULL, "
+        "x2 INTEGER NOT NULL, "
+        "y2 INTEGER NOT NULL)");
+    cout << "'baseLines' 테이블이 준비되었습니다.\n";
     return;
 }
 
-vector<BaseLineCoordinate> select_all_data_baseLineCoordinates(SQLite::Database& db){
-    vector<BaseLineCoordinate> baseLineCoordinates;
+vector<BaseLine> select_all_data_baseLines(SQLite::Database& db){
+    vector<BaseLine> baseLines;
     try {
-        SQLite::Statement query(db, "SELECT * FROM baseLineCoordinates");
+        SQLite::Statement query(db, "SELECT * FROM baseLines");
         cout << "Prepared SQL for select data vector: " << query.getExpandedSQL() << endl;
         while (query.executeStep()) {
 
-            int matrixNum = query.getColumn("matrixNum").getInt();
-            int x = query.getColumn("x").getInt();
-            int y = query.getColumn("y").getInt();
+            int indexNum = query.getColumn("indexNum").getInt();
+            int matrixNum1 = query.getColumn("matrixNum1").getInt();
+            int x1 = query.getColumn("x1").getInt();
+            int y1 = query.getColumn("y1").getInt();
+            int matrixNum2 = query.getColumn("matrixNum2").getInt();
+            int x2 = query.getColumn("x1").getInt();
+            int y2 = query.getColumn("y1").getInt();
 
-            BaseLineCoordinate baseLineCoordinate = {matrixNum, x, y};
-            baseLineCoordinates.push_back(baseLineCoordinate);
+            BaseLine baseLine = {indexNum, matrixNum1, x1, y1, matrixNum2, x2, y2};
+            baseLines.push_back(baseLine);
         }
     } catch (const exception& e) {
         cerr << "사용자 조회 실패: " << e.what() << endl;
     }
-    return baseLineCoordinates;
+    return baseLines;
 }
 
-bool insert_data_baseLineCoordinates(SQLite::Database& db,int matrixNum, int x,int y ){
+bool insert_data_baseLines(SQLite::Database& db,BaseLine baseLine){
     try {
         // SQL 인젝션 방지를 위해 Prepared Statement 사용
-        SQLite::Statement query(db, "INSERT INTO baseLineCoordinates (matrixNum, x, y) VALUES (?, ?, ?)");
-        query.bind(1, matrixNum);
-        query.bind(2, x);
-        query.bind(3, y);
+        SQLite::Statement query(db, "INSERT INTO baseLines (indexNum, matrixNum1, x1, y1, matrixNum2, x2, y2) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        query.bind(1, baseLine.index);
+        query.bind(2, baseLine.matrixNum1);
+        query.bind(3, baseLine.x1);
+        query.bind(4, baseLine.y1);
+        query.bind(5, baseLine.matrixNum2);
+        query.bind(6, baseLine.x2);
+        query.bind(7, baseLine.y2);
+
         cout << "Prepared SQL for insert: " << query.getExpandedSQL() << endl;
         query.exec();
         
-        cout << "데이터 추가: (매트릭스 인덱스: " << matrixNum << ")" << endl;
+        cout << "데이터 추가: (기준선 인덱스: " << baseLine.index << ")" << endl;
     } catch (const exception& e) {
         // 이름이 중복될 경우 (UNIQUE 제약 조건 위반) 오류가 발생할 수 있습니다.
-        cerr << "데이터 '" << matrixNum << "' 추가 실패: " << e.what() << endl;
+        cerr << "데이터 '" << baseLine.index << "' 추가 실패: " << e.what() << endl;
         return false;
     }
     return true;
@@ -227,17 +240,17 @@ bool insert_data_baseLineCoordinates(SQLite::Database& db,int matrixNum, int x,i
 ///////////////////////////////////////////////
 // VerticalLineEquation 테이블
 
-void create_table_verticalLineEquation(SQLite::Database& db)
+void create_table_verticalLineEquations(SQLite::Database& db)
 {
     db.exec("CREATE TABLE IF NOT EXISTS verticalLineEquations ("
         "indexNum INTEGER PRIMARY KEY, "
         "a REAL NOT NULL, "
         "b REAL NOT NULL)");
-    cout << "'BaseLineCoordinates' 테이블이 준비되었습니다.\n";
+    cout << "'verticalLineEquations' 테이블이 준비되었습니다.\n";
     return;
 }
 
-VerticalLineEquation select_data_verticalLineEquation(SQLite::Database& db, int index){
+VerticalLineEquation select_data_verticalLineEquations(SQLite::Database& db, int index){
     VerticalLineEquation verticalLineEquation;
     try {
         SQLite::Statement query(db, "SELECT * FROM verticalLineEquations WHERE index = ?");
@@ -256,7 +269,7 @@ VerticalLineEquation select_data_verticalLineEquation(SQLite::Database& db, int 
     return verticalLineEquation;
 }
 
-bool insert_data_verticalLineEquation(SQLite::Database& db, int index, double a, double b){
+bool insert_data_verticalLineEquations(SQLite::Database& db, int index, double a, double b){
     try {
         // SQL 인젝션 방지를 위해 Prepared Statement 사용
         SQLite::Statement query(db, "INSERT INTO verticalLineEquations (indexNum, a, b) VALUES (?, ?, ?)");
