@@ -1,2 +1,4 @@
 metadata/.env
 server_log.db
+fullchain.crt
+server.key

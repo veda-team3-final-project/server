@@ -1,5 +1,60 @@
 #include "tcp_server.hpp" 
 
+/*
+
+OpenSSL 관련
+
+*/
+
+SSL_CTX* ssl_ctx = nullptr;
+
+// SSL 초기화 함수
+bool init_openssl() {
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+    return true;
+}
+
+// SSL 정리 함수
+void cleanup_openssl() {
+    EVP_cleanup();
+}
+
+// SSL 컨텍스트 생성
+SSL_CTX* create_ssl_context() {
+    const SSL_METHOD* method = TLS_server_method();
+    SSL_CTX* ctx = SSL_CTX_new(method);
+    if (!ctx) {
+        perror("SSL 컨텍스트 생성 실패");
+        return nullptr;
+    }
+    return ctx;
+}
+
+// SSL 컨텍스트 설정
+void configure_ssl_context(SSL_CTX* ctx) {
+    if (SSL_CTX_use_certificate_file(ctx, "fullchain.crt", SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+}
+
+/*
+
+OpenSSL 관련 끝
+
+*/
+
+
+
+
+
+
 // --- 응답 데이터를 저장할 콜백 함수 ---
 // libcurl은 데이터를 작은 청크로 나눠서 이 함수를 여러 번 호출해요.
 // userp 인자는 CURLOPT_WRITEDATA로 설정한 포인터를 받아요.
@@ -10,6 +65,7 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
 }
 
 string getLines(){
+    
     string response_buffer;
     try {
         CURL *curl_handle; // curl 통신을 위한 핸들
@@ -95,7 +151,7 @@ string getLines(){
     return response_buffer;
 }
 
-string putLines(CrossLine crossLine){
+string putLines(vector<CrossLine> crossLines){
     string response_buffer;
     try {
         CURL *curl_handle; // curl 통신을 위한 핸들
@@ -120,36 +176,40 @@ string putLines(CrossLine crossLine){
         curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
         curl_easy_setopt(curl_handle, CURLOPT_USERPWD, "admin:admin123@");
 
+        
         json curlRoot;
         curlRoot["channel"] = 0;
         curlRoot["enable"] = true;
         json lineArray = json::array();
-        json line1;
-        line1["index"] = crossLine.index;
+        for(const auto& crossLine:crossLines){
+            json line1;
+            line1["index"] = crossLine.index;
 
-        json coodArray = json::array();
-        json cood1;
-        cood1["x"] = crossLine.x1;
-        cood1["y"] = crossLine.y1;
-        coodArray.push_back(cood1);
-        json cood2;
-        cood2["x"] = crossLine.x2;
-        cood2["y"] = crossLine.y2;
-        coodArray.push_back(cood2);
+            json coodArray = json::array();
+            json cood1;
+            cood1["x"] = crossLine.x1;
+            cood1["y"] = crossLine.y1;
+            coodArray.push_back(cood1);
+            json cood2;
+            cood2["x"] = crossLine.x2;
+            cood2["y"] = crossLine.y2;
+            coodArray.push_back(cood2);
 
-        line1["lineCoordinates"] = coodArray;
-        line1["mode"] = crossLine.mode;
-        line1["name"] = crossLine.name;
-        json otfArray = json::array();
-        otfArray.push_back("Person");
-        otfArray.push_back("Vehicle.Bicycle");
-        otfArray.push_back("Vehicle.Car");
-        otfArray.push_back("Vehicle.Motorcycle");
-        otfArray.push_back("Vehicle.Bus");
-        otfArray.push_back("Vehicle.Truck");
-        line1["objectTypeFilter"] = otfArray;
-        // ["Person","Vehicle.Bicycle","Vehicle.Car","Vehicle.Motorcycle","Vehicle.Bus","Vehicle.Truck"]
-        lineArray.push_back(line1);
+            line1["lineCoordinates"] = coodArray;
+            line1["mode"] = crossLine.mode;
+            line1["name"] = crossLine.name;
+            json otfArray = json::array();
+            otfArray.push_back("Person");
+            otfArray.push_back("Vehicle.Bicycle");
+            otfArray.push_back("Vehicle.Car");
+            otfArray.push_back("Vehicle.Motorcycle");
+            otfArray.push_back("Vehicle.Bus");
+            otfArray.push_back("Vehicle.Truck");
+            line1["objectTypeFilter"] = otfArray;
+            // ["Person","Vehicle.Bicycle","Vehicle.Car","Vehicle.Motorcycle","Vehicle.Bus","Vehicle.Truck"]
+            lineArray.push_back(line1);
+        }
+        
         curlRoot["line"] = lineArray;
 
         string insert_json_string = curlRoot.dump();
@@ -319,8 +379,24 @@ string base64_encode(const vector<unsigned char>& in) {
 
 // --- 클라이언트 처리 스레드 함수 ---
 void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex) {
+    // SSL 연결 설정
+    SSL* ssl = SSL_new(ssl_ctx);
+    if (!ssl) {
+        ERR_print_errors_fp(stderr);
+        close(client_socket);
+        return;
+    }
+
+    SSL_set_fd(ssl, client_socket);
+    if (SSL_accept(ssl) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        close(client_socket);
+        return;
+    }
+
     printNowTimeKST();
-    cout << " [Thread " << std::this_thread::get_id() << "] 클라이언트 처리 시작." << endl;
+    cout << " [Thread " << std::this_thread::get_id() << "] SSL 클라이언트 처리 시작." << endl;
 
     create_table_detections(db);
     create_table_lines(db);
@@ -330,7 +406,7 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
 
     while (true) {
         uint32_t net_len;
-        if (!recvAll(client_socket, reinterpret_cast<char*>(&net_len), sizeof(net_len))) {
+        if (!recvAll(ssl, reinterpret_cast<char*>(&net_len), sizeof(net_len))) {
             break; 
         }
 
@@ -341,7 +417,7 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
         }
 
         vector<char> json_buffer(json_len);
-        if (!recvAll(client_socket, json_buffer.data(), json_len)) {
+        if (!recvAll(ssl, json_buffer.data(), json_len)) {
             break;
         }
 
@@ -380,14 +456,23 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             } 
             
             else if(received_json.value("request_id", 2) == 2){
                 // 클라이언트의 가상 라인 좌표값 - 도트 매트릭스 매핑 요청(insert) 신호
+                // getlines해서 기존 라인정보 들고오기
+                // 기존 라인정보와 새로운 라인정보에 겹치는 라인이 있는 검사
+
+                // 겹치면 
+                // putlines, db insert 수행 X
+                
+                // 겹치지 않으면
+                // putlines에 새로운 라인정보 + 기존 라인정보 추가하고 신호보내기
+                // db에 새로운 라인정보만 추가
 
                 int index = received_json["data"].value("index", -1);
                 int x1 = received_json["data"].value("x1", -1);
@@ -399,51 +484,142 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 int leftMatrixNum = received_json["data"].value("leftMatrixNum", 1);
                 int rightMatrixNum = received_json["data"].value("rightMatrixNum", 2);
 
-                CrossLine crossLine = {index,x1,y1,x2,y2,name,mode,leftMatrixNum,rightMatrixNum};
-                putLines(crossLine);
+                CrossLine newCrossLine = {index, x1, y1, x2, y2, name, mode, leftMatrixNum, rightMatrixNum};
 
-                bool mappingSuccess;
-                // --- DB 접근 시 Mutex로 보호 ---
-                {
-                    std::lock_guard<std::mutex> lock(db_mutex);
-                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
-                    mappingSuccess = insert_data_lines(db,index,x1,y1,x2,y2,name,mode,leftMatrixNum,rightMatrixNum);
-                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                // 2. 결과를 저장할 벡터
+                vector<CrossLine> crossLines;
+                bool isDuplicated = false;
+                // 3. JSON 문자열 파싱
+                json j = json::parse(getLines());
+
+                // 4. 데이터 추출 및 벡터에 추가
+                // "lineCrossing" 배열의 첫 번째 요소 안에 있는 "line" 배열을 순회
+                for (const auto& item : j["lineCrossing"][0]["line"]) {
+                    CrossLine cl; // 임시 CrossLine 객체 생성
+
+                    // 각 필드 값 추출
+                    cl.index = item["index"];
+                    if(index == cl.index) {
+                        isDuplicated = true;
+                    }
+                    cl.name = item["name"];
+                    cl.mode = item["mode"];
+
+                    // lineCoordinates 배열에서 좌표 추출
+                    cl.x1 = item["lineCoordinates"][0]["x"];
+                    cl.y1 = item["lineCoordinates"][0]["y"];
+                    cl.x2 = item["lineCoordinates"][1]["x"];
+                    cl.y2 = item["lineCoordinates"][1]["y"];
+
+                    // 완성된 객체를 벡터에 추가
+                    crossLines.push_back(cl);
                 }
-                // --- 보호 끝 ---
 
-                json root;
-                root["request_id"] = 11;
-                root["mapping_success"] = (mappingSuccess == true)?1:0;
-                json_string = root.dump();
-                
-                uint32_t res_len = json_string.length();
-                uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+
+                if(isDuplicated == false){
+                    crossLines.push_back(newCrossLine);
+                    putLines(crossLines);
+
+                    bool mappingSuccess;
+                    // --- DB 접근 시 Mutex로 보호 ---
+                    {
+                        std::lock_guard<std::mutex> lock(db_mutex);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
+                        mappingSuccess = insert_data_lines(db,index,x1,y1,x2,y2,name,mode,leftMatrixNum,rightMatrixNum);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                    }
+                    // --- 보호 끝 ---
+
+                    json root;
+                    root["request_id"] = 11;
+                    root["mapping_success"] = (mappingSuccess == true)?1:0;
+                    json_string = root.dump();
+                    
+                    uint32_t res_len = json_string.length();
+                    uint32_t net_res_len = htonl(res_len);
+                    sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                    sendAll(ssl, json_string.c_str(), res_len, 0);
+                } 
+   
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
 
             } 
             
             else if(received_json.value("request_id", -1) == 3){
-                
-                string get_json_result = getLines();
-                cout << get_json_result << "\n";
+                // 클라이언트의 감지선 좌표값 요청(select all) 신호 
+                // getLine해서 기존 라인 정보 들고오기
+                // db의 select all해서 라인 정보 들고오기
 
-                vector<CrossLine> lines;
+                // 불일치되는 부분 
+
+                // db에는 index로 하나씩 delete 
+                // 패킷은 제외하고 남는 것만 전송
+
+                vector<CrossLine> httpLines;
+                // 3. JSON 문자열 파싱
+                json j = json::parse(getLines());
+
+                // 4. 데이터 추출 및 벡터에 추가
+                // "lineCrossing" 배열의 첫 번째 요소 안에 있는 "line" 배열을 순회
+                for (const auto& item : j["lineCrossing"][0]["line"]) {
+                    CrossLine cl; // 임시 CrossLine 객체 생성
+
+                    // 각 필드 값 추출
+                    cl.index = item["index"];
+                    cl.name = item["name"];
+                    cl.mode = item["mode"];
+
+                    // lineCoordinates 배열에서 좌표 추출
+                    cl.x1 = item["lineCoordinates"][0]["x"];
+                    cl.y1 = item["lineCoordinates"][0]["y"];
+                    cl.x2 = item["lineCoordinates"][1]["x"];
+                    cl.y2 = item["lineCoordinates"][1]["y"];
+
+                    // 완성된 객체를 벡터에 추가
+                    httpLines.push_back(cl);
+                }
+
+                
+
+                vector<CrossLine> dbLines;
                 // --- DB 접근 시 Mutex로 보호 ---
                 {
                     std::lock_guard<std::mutex> lock(db_mutex);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
-                    lines = select_all_data_lines(db);
+                    dbLines = select_all_data_lines(db);
                     cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
                 }
                 // --- 보호 끝 ---
 
+                vector<CrossLine> realLines;
+                for(auto httpLine:httpLines){
+                    for(auto dbLine:dbLines){
+                        if(httpLine.index == dbLine.index){
+                            realLines.push_back(dbLine);
+                        }
+                    }
+                }
+
+                // lines 테이블 비우고 실제 CCTV에 있는 가상선으로만 DB 채우기
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삭제 시작 (Lock 획득)" << endl;
+                    delete_all_data_lines(db);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 삭제 완료 (Lock 해제)" << endl;
+                }
+                for(auto realLine:realLines){
+                    {
+                        std::lock_guard<std::mutex> lock(db_mutex);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 시작 (Lock 획득)" << endl;
+                        insert_data_lines(db,realLine.index,realLine.x1,realLine.y1,realLine.x2,realLine.y2,realLine.name,realLine.mode,realLine.leftMatrixNum,realLine.rightMatrixNum);
+                        cout << "[Thread " << std::this_thread::get_id() << "] DB 삽입 완료 (Lock 해제)" << endl;
+                    }
+                }
+
                 json root;
                 root["request_id"] = 12;
                 json data_array = json::array();
-                for (const auto& line : lines) {
+                for (const auto& line : realLines) {
                     json d_obj;
                     d_obj["index"] = line.index;
                     d_obj["x1"] = line.x1;
@@ -461,13 +637,16 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             } 
             
             else if(received_json.value("request_id", -1) == 4){
                 // 클라이언트에게 보낼 라인 삭제 신호
+                // db에서 선 삭제
+                // deleteline 호출
+
                 int deleteIndex = received_json["data"].value("index", -1);
 
                 deleteLines(deleteIndex);
@@ -489,8 +668,8 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             }
 
@@ -519,16 +698,16 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             } 
             
             else if(received_json.value("request_id", -1) == 6){
                 // 클라이언트 감지선의 수직선 방정식 insert 신호 
                 int index = received_json["data"].value("index", -1);
-                double a = received_json["data"].value("x", -1); // ax+b = 0
-                double b = received_json["data"].value("y", -1);
+                double a = received_json["data"].value("a", -1); // ax+b = 0
+                double b = received_json["data"].value("b", -1);
 
                 VerticalLineEquation verticalLineEquation = {index,a,b};
 
@@ -549,8 +728,41 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
                 
                 uint32_t res_len = json_string.length();
                 uint32_t net_res_len = htonl(res_len);
-                sendAll(client_socket, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
-                sendAll(client_socket, json_string.c_str(), res_len, 0);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
+                cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
+            } 
+            
+            else if(received_json.value("request_id", -1) == 7){
+                // 클라이언트 도로기준선 좌표 select all(동기화) 신호
+
+                vector<BaseLineCoordinate> baseLineCoordinates;
+                // --- DB 접근 시 Mutex로 보호 ---
+                {
+                    std::lock_guard<std::mutex> lock(db_mutex);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 시작 (Lock 획득)" << endl;
+                    baseLineCoordinates = select_all_data_baseLineCoordinates(db);
+                    cout << "[Thread " << std::this_thread::get_id() << "] DB 조회 완료 (Lock 해제)" << endl;
+                }
+                // --- 보호 끝 ---
+
+                json root;
+                root["request_id"] = 15;
+                json data_array = json::array();
+                for (const auto& baseLineCoordinate : baseLineCoordinates) {
+                    json d_obj;
+                    d_obj["matrixNum"] = baseLineCoordinate.matrixNum;
+                    d_obj["x"] = baseLineCoordinate.x;
+                    d_obj["y"] = baseLineCoordinate.y;
+                    data_array.push_back(d_obj);
+                }
+                root["data"] = data_array;
+                json_string = root.dump();
+                
+                uint32_t res_len = json_string.length();
+                uint32_t net_res_len = htonl(res_len);
+                sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0);
+                sendAll(ssl, json_string.c_str(), res_len, 0);
                 cout << "[Thread " << std::this_thread::get_id() << "] 응답 전송 완료." << endl;
             }
 
@@ -568,6 +780,22 @@ void handle_client(int client_socket, SQLite::Database& db, std::mutex& db_mutex
 
 // --- 메인 TCP 서버 로직 (수정됨) ---
 int tcp_run() {
+    // OpenSSL 초기화
+    if (!init_openssl()) {
+        cerr << "OpenSSL 초기화 실패" << endl;
+        return -1;
+    }
+
+    // SSL 컨텍스트 생성
+    ssl_ctx = create_ssl_context();
+    if (!ssl_ctx) {
+        cleanup_openssl();
+        return -1;
+    }
+
+    // SSL 컨텍스트 설정
+    configure_ssl_context(ssl_ctx);
+
     SQLite::Database db("server_log.db", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
     cout << "데이터베이스 파일 'server_log.db'에 연결되었습니다.\n";
 
@@ -617,18 +845,18 @@ int tcp_run() {
     return 0;
 }
 
-bool recvAll(int socket_fd, char* buffer, size_t len) {
+// SSL 버전의 송수신 함수
+bool recvAll(SSL* ssl, char* buffer, size_t len) {
     size_t total_received = 0;
     while (total_received < len) {
-        ssize_t bytes_received = recv(socket_fd, buffer + total_received, len - total_received, 0);
+        int bytes_received = SSL_read(ssl, buffer + total_received, len - total_received);
         
-        if (bytes_received == -1) {
-            if (errno == EINTR) continue;
-            cerr << "recv 에러: " << strerror(errno) << endl;
-            return false;
-        }
-        if (bytes_received == 0) {
-            cerr << "데이터 수신 중 클라이언트 연결 종료" << endl;
+        if (bytes_received <= 0) {
+            int error = SSL_get_error(ssl, bytes_received);
+            if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+                continue;
+            }
+            ERR_print_errors_fp(stderr);
             return false;
         }
         total_received += bytes_received;
@@ -636,29 +864,18 @@ bool recvAll(int socket_fd, char* buffer, size_t len) {
     return true;
 }
 
-ssize_t sendAll(int new_socket, const char* buffer, size_t len, int flags) {
+ssize_t sendAll(SSL* ssl, const char* buffer, size_t len, int flags) {
     size_t total_sent = 0;
     while (total_sent < len) {
-        ssize_t bytes_sent;
+        int bytes_sent = SSL_write(ssl, buffer + total_sent, len - total_sent);
 
-        // EINTR 처리를 위해 send 호출을 루프 안에 넣을 수 있습니다.
-        bytes_sent = send(new_socket, buffer + total_sent, len - total_sent, flags);
-
-        if (bytes_sent == -1) {
-            // EINTR은 실제 에러가 아니므로, 재시도합니다.
-            if (errno == EINTR) {
-                continue; // while 루프의 처음으로 돌아가 send를 다시 시도
+        if (bytes_sent <= 0) {
+            int error = SSL_get_error(ssl, bytes_sent);
+            if (error == SSL_ERROR_WANT_WRITE || error == SSL_ERROR_WANT_READ) {
+                continue;
             }
-            
-            // 그 외의 에러는 치명적인 오류로 간주하고 -1을 반환합니다.
-            // perror()는 제거하고, 호출자가 errno를 확인하도록 합니다.
+            ERR_print_errors_fp(stderr);
             return -1;
-        }
-
-        if (bytes_sent == 0) {
-            // 연결이 끊어진 경우, 지금까지 보낸 만큼만 반환합니다.
-            // 이 부분은 기존 로직이 합리적이므로 유지합니다.
-            return total_sent;
         }
 
         total_sent += bytes_sent;
@@ -666,6 +883,46 @@ ssize_t sendAll(int new_socket, const char* buffer, size_t len, int flags) {
 
     return total_sent;
 }
+
+// 일반 소켓 버전의 송수신 함수
+// bool recvAll(int socket_fd, char* buffer, size_t len) {
+//     size_t total_received = 0;
+//     while (total_received < len) {
+//         ssize_t bytes_received = recv(socket_fd, buffer + total_received, len - total_received, 0);
+        
+//         if (bytes_received == -1) {
+//             if (errno == EINTR) continue;
+//             cerr << "recv 에러: " << strerror(errno) << endl;
+//             return false;
+//         }
+//         if (bytes_received == 0) {
+//             cerr << "데이터 수신 중 클라이언트 연결 종료" << endl;
+//             return false;
+//         }
+//         total_received += bytes_received;
+//     }
+//     return true;
+// }
+
+// ssize_t sendAll(int socket_fd, const char* buffer, size_t len, int flags) {
+//     size_t total_sent = 0;
+//     while (total_sent < len) {
+//         ssize_t bytes_sent = send(socket_fd, buffer + total_sent, len - total_sent, flags);
+
+//         if (bytes_sent == -1) {
+//             if (errno == EINTR) {
+//                 continue;
+//             }
+//             return -1;
+//         }
+
+//         if (bytes_sent == 0) {
+//             return total_sent;
+//         }
+//         total_sent += bytes_sent;
+//     }
+//     return total_sent;
+// }
 
 void printNowTimeKST(){
     // 한국 시간 (KST), 밀리초 포함 출력
