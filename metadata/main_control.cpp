@@ -568,8 +568,23 @@ void metadata_thread(SQLite::Database& db) {
 
     deque<string> frame_cache;
 
+    auto last_reload = chrono::steady_clock::now();
+    const auto interval = chrono::seconds(30);
+
     while (fgets(buffer, BUFFER_SIZE, pipe)) {
         xml_buffer += buffer;
+
+        // 일정 시간마다 DB 설정값 Reload
+        auto now = chrono::steady_clock::now();
+        if (now - last_reload > interval) {
+            {
+                lock_guard<recursive_mutex> lock(data_mutex);
+                load_dots_and_center(db);
+                load_rule_lines(db);
+                cout << "[INFO] DB 설정값을 재로딩했습니다." << endl;
+            }
+            last_reload = now;
+        }
 
         // XML 블럭 완성 여부 확인
         if (xml_buffer.find("</tt:MetadataStream>") != string::npos) {
