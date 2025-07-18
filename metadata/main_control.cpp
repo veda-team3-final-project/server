@@ -11,13 +11,12 @@
 #include <sstream>
 #include <deque>
 #include <limits>
-#include <numeric>
-#include <chrono>
-#include <iomanip>
-#include <ctime>
 
-// SQLiteCpp 라이브러리 헤더 (컴파일 시 필요합니다)
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
 #include <SQLiteCpp/SQLiteCpp.h>
+#include "board_control.h"
 
 using namespace std;
 
@@ -33,6 +32,23 @@ struct Line {
     string mode;
     string name;
 };
+
+
+// 보드-포트 매핑 테이블
+std::vector<std::pair<int, std::string>> board_info = {
+    {1, "/dev/ttyAMA0"},
+    {2, "/dev/ttyAMA2"},
+    {3, "/dev/ttyAMA1"},
+    {4, "/dev/ttyAMA3"}
+};
+
+// 보드 ID → 포트 경로 조회 함수
+std::string get_uart_port_for_board(int board_id) {
+    for (const auto& [id, port] : board_info) {
+        if (id == board_id) return port;
+    }
+    return "";
+}
 
 // --- 전역 상태 ---
 recursive_mutex data_mutex;
@@ -65,6 +81,54 @@ unordered_map<int, ObjectState> vehicle_trajectory_history;
 void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& rule_name, const string& utc_time_str);
 float compute_cosine_similarity(const Point& a, const Point& b);
 void capture_screen_and_save(SQLite::Database& db, const string& utc_time_str);
+void control_board(int board_id, uint8_t cmd);
+
+
+// --- 보드제어 관련 함수 ---
+
+std::vector<uint8_t> encode_frame(uint8_t cmd, int board_id) {
+    uint8_t dst_mask = (1 << (board_id - 1));
+
+    std::vector<uint8_t> payload = {dst_mask, cmd};
+
+    std::vector<uint8_t> frame = {DLE, STX};
+    for (uint8_t b : payload) {
+        if (b == DLE) {
+            frame.push_back(DLE);
+            frame.push_back(DLE);
+        } else {
+            frame.push_back(b);
+        }
+    }
+    frame.push_back(DLE);
+    frame.push_back(ETX);
+    return frame;
+}
+
+
+// 보드 제어 함수
+void control_board(int board_id, uint8_t cmd) {
+    std::string port = get_uart_port_for_board(board_id);
+    if (port.empty()) {
+        cerr << "[ERROR] Unknown board ID: " << board_id << endl;
+        return;
+    }
+
+    BoardController controller(port, board_id);
+    bool ok = false;
+    if (cmd == CMD_LCD_ON) {
+        ok = controller.send_lcd_on_with_ack(3, 500); // 3회 재시도, 500ms 타임아웃
+    } else if (cmd == CMD_LCD_OFF) {
+        ok = controller.send_lcd_off_with_ack(3, 500);
+    }
+
+    if (ok) {
+        cout << "[INFO] Command 0x" << hex << int(cmd) << " succeeded for board " << board_id << endl;
+    } else {
+        cerr << "[ERROR] Command 0x" << hex << int(cmd) << " failed for board " << board_id << endl;
+    }
+}
+
 
 
 // --- DB 관련 함수 ---
@@ -115,11 +179,11 @@ bool calculate_intersection(const Point& a1, const Point& a2,
 void load_dots_and_center(SQLite::Database& db) {
     cout << "[INFO] Loading baseLines from DB..." << endl;
 
-    //const float scale_x = 3840.0f / 960.0f;
-    //const float scale_y = 2160.0f / 540.0f;
+    const float scale_x = 3840.0f / 960.0f;
+    const float scale_y = 2160.0f / 540.0f;
     
-    const float scale_x = 1;
-    const float scale_y = 1;
+    //const float scale_x = 1;
+    //const float scale_y = 1;
     base_line_pairs.clear();
 
     try {
@@ -202,7 +266,6 @@ void load_rule_lines(SQLite::Database& db) {
 }
 
 
-
 // --- 핵심 로직 함수 ---
 
 // 화면을 캡처하고 DB에 저장
@@ -231,7 +294,7 @@ void capture_screen_and_save(SQLite::Database& db, const string& utc_time_str) {
     char kst_buffer[100];
     struct tm kst_tm;
     gmtime_r(&time_kst, &kst_tm);
-    std::strftime(kst_buffer, sizeof(kst_buffer), "%Y-%m-%d %H:%M:%S", &kst_tm);
+    std::strftime(kst_buffer, sizeof(kst_buffer), "%Y-%m-%dT%H:%M:%SKST", &kst_tm);
     string kst_timestamp_str(kst_buffer);
 
     // 2. ffmpeg 캡처 명령어 생성 (이미지를 stdout으로 출력)
@@ -261,6 +324,7 @@ void capture_screen_and_save(SQLite::Database& db, const string& utc_time_str) {
         cerr << "[ERROR] Failed to read image data from ffmpeg pipe." << endl;
     }
 }
+
 
 // 블럭 내에 VideoAnalytics 프레임이 포함되어 있는지 확인
 bool contains_frame_block(const string& block) {
@@ -460,6 +524,11 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
             cout << "\n[ALERT] " << vehicle_id << " 차량이 " << human_id << " 인간을 향해 측면에서 접근 중입니다." << endl;
             cout << board_id << " dot matrix를 가동합니다." << endl;
             cout << "(코사인 유사도 : " << similarity << ")\n" << endl;
+            
+            // 7. 보드 제어
+            control_board(board_id, 0x01); // 0x01 명령어   
+            sleep(5);
+            control_board(board_id, 0x02); // 0x02 명령어
 
             // 화면 캡처 및 DB 저장
             capture_screen_and_save(db, utc_time_str);
@@ -470,6 +539,7 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
 }
 
 
+
 // 코사인 유사도 계산
 float compute_cosine_similarity(const Point& a, const Point& b) {
     float dot = a.x * b.x + a.y * b.y;
@@ -478,6 +548,7 @@ float compute_cosine_similarity(const Point& a, const Point& b) {
     if (mag_a == 0 || mag_b == 0) return -2.0f; // 불가능한 값 리턴
     return dot / (mag_a * mag_b);
 }
+
 
 // ffmpeg 메타데이터 처리 루프
 void metadata_thread(SQLite::Database& db) {
@@ -585,10 +656,7 @@ int main() {
     return 0;
 }
 
-/*
-compile with:
-g++ logic.cpp -o logic\
-     -I/home/park/vcpkg/installed/arm64-linux/include\
-     -L/home/park/vcpkg/installed/arm64-linux/lib\
-     -lSQLiteCpp -lsqlite3 -std=c++17
+
+/*compile with:
+ g++ main_control.cpp board_control.cpp -o control -lSQLiteCpp -lsqlite3 --std=c++17   
 */

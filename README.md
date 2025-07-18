@@ -5,7 +5,8 @@ sudo apt update
 sudo apt install libgstreamer1.0-dev libgstrtspserver-1.0-dev
 sudo apt install libcurl4-openssl-dev
 
-
+(Optional) 부가 패키지 설치 명령어 :
+sudo apt install sqlite3 // sqlite db 수동 조작용
 
 rtsp 접속을 위한 환경변수(.env) 파일 내용 
 
