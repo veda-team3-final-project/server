@@ -72,4 +72,6 @@ void cleanup_openssl();
 SSL_CTX* create_ssl_context();
 void configure_ssl_context(SSL_CTX* ctx);
 
+void start_metadata_parser();
+void stop_metadata_parser();
 bool send_bboxes_to_client(SSL* ssl);

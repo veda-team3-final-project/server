@@ -12,8 +12,29 @@
 
 void rtsp_run(int argc, char *argv[]) {
   gchar *port = (gchar *)CCTV_RTSP_PORT;
-  // GStreamer 초기화 (초기화 실패시 에러 발생시킴)
+  
+  // 포트가 이미 사용중인지 확인
   GError *error = NULL;
+  GSocket *test_socket = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, &error);
+  if (!test_socket) {
+    g_printerr("소켓 생성 실패: %s\n", error->message);
+    g_error_free(error);
+    return;
+  }
+
+  GSocketAddress *addr = g_inet_socket_address_new_from_string("0.0.0.0", atoi(CCTV_RTSP_PORT));
+  if (!g_socket_bind(test_socket, addr, TRUE, &error)) {
+    g_printerr("포트 %s가 이미 사용중입니다\n", CCTV_RTSP_PORT);
+    g_object_unref(addr);
+    g_object_unref(test_socket);
+    g_error_free(error);
+    return;
+  }
+  g_object_unref(addr);
+  g_object_unref(test_socket);
+
+  // GStreamer 초기화
+  error = NULL;
   gboolean initialized = gst_init_check(&argc, &argv, &error);
   if (!initialized) {
     g_printerr("GStreamer 초기화 실패: %s\n", error->message);
@@ -74,6 +95,26 @@ void pi_rtsp_run(int argc, char *argv[]) {
   GstRTSPMediaFactory *factory;
   gchar *port = (gchar *)PICAM_RTSP_PORT;
   gchar *source_rtsp_url;
+
+  // 포트가 이미 사용중인지 확인
+  GError *error = NULL;
+  GSocket *test_socket = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, &error);
+  if (!test_socket) {
+    g_printerr("소켓 생성 실패: %s\n", error->message);
+    g_error_free(error);
+    return;
+  }
+
+  GSocketAddress *addr = g_inet_socket_address_new_from_string("0.0.0.0", atoi(PICAM_RTSP_PORT));
+  if (!g_socket_bind(test_socket, addr, TRUE, &error)) {
+    g_printerr("포트 %s가 이미 사용중입니다\n", PICAM_RTSP_PORT);
+    g_object_unref(addr);
+    g_object_unref(test_socket);
+    g_error_free(error);
+    return;
+  }
+  g_object_unref(addr);
+  g_object_unref(test_socket);
 
   source_rtsp_url = "rtsp://192.168.0.34:8554/stream";
 

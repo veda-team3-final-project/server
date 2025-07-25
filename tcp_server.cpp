@@ -1,4 +1,7 @@
 #include "tcp_server.hpp"
+#include "server_bbox.hpp"
+#include "metadata_parser.hpp"
+#include <thread>
 
 /*
 
@@ -462,8 +465,10 @@ void handle_client(int client_socket, SQLite::Database& db,
 
 
   atomic<bool> bbox_push_enabled(false);
-  // BBox push 쓰레드
+  atomic<bool> metadata_parsing_enabled(false);
+  // BBox push 쓰레드와 메타데이터 파싱 쓰레드
   thread push_thread;
+  thread metadata_thread;
 
 
 
@@ -979,6 +984,11 @@ void handle_client(int client_socket, SQLite::Database& db,
              << endl;
       }
       else if (received_json.value("request_id", -1) == 20 && !bbox_push_enabled) {
+        // 메타데이터 파싱 시작
+        start_metadata_parser();
+        metadata_thread = std::thread(parse_metadata);
+
+        // bbox push 스레드 시작
         bbox_push_enabled = true;
         push_thread = std::thread([ssl, &bbox_push_enabled, &ssl_write_mutex]() {
             while (bbox_push_enabled) {
@@ -989,8 +999,13 @@ void handle_client(int client_socket, SQLite::Database& db,
       }
 
       else if (received_json.value("request_id", -1) == 21 && bbox_push_enabled) {
+          // bbox push 중지
           bbox_push_enabled = false;
           if (push_thread.joinable()) push_thread.join();
+
+          // 메타데이터 파싱 중지
+          stop_metadata_parser();
+          if (metadata_thread.joinable()) metadata_thread.join();
       }
 
       cout << "JSON 송신 성공 : (" << json_string.size() << " 바이트):\n"
@@ -1003,7 +1018,10 @@ void handle_client(int client_socket, SQLite::Database& db,
 
   // 연결 종료 직전 정리
   bbox_push_enabled = false;
+  metadata_parsing_enabled = false;
+  
   if (push_thread.joinable()) push_thread.join();
+  if (metadata_thread.joinable()) metadata_thread.join();
 
   close(client_socket);
   printNowTimeKST();
@@ -1196,15 +1214,16 @@ bool send_bboxes_to_client(SSL* ssl) {
     json bbox_array = json::array();
     {
         std::lock_guard<std::mutex> lock(bbox_mutex);
-        for (const BBox& box : latest_bboxes) {
+        std::cout << "[TCP Server] Current bbox count: " << latest_bboxes.size() << std::endl;
+        for (const ServerBBox& box : latest_bboxes) {
             json j = {
-                {"object_id", box.object_id},
+                {"id", box.object_id},
                 {"type", box.type},
                 {"confidence", box.confidence},
-                {"left", box.left},
-                {"top", box.top},
-                {"right", box.right},
-                {"bottom", box.bottom}
+                {"x", box.left},
+                {"y", box.top},
+                {"width", box.right - box.left},
+                {"height", box.bottom - box.top}
             };
             bbox_array.push_back(j);
         }
@@ -1215,9 +1234,17 @@ bool send_bboxes_to_client(SSL* ssl) {
     };
 
     std::string json_str = response.dump();
+    uint32_t res_len = json_str.length();
+    uint32_t net_res_len = htonl(res_len);
+
     {
         std::lock_guard<std::mutex> lock(ssl_write_mutex);
-        int ret = SSL_write(ssl, json_str.c_str(), json_str.length());
-        return ret > 0;
+        // 먼저 4바이트 길이 접두사 전송
+        if (sendAll(ssl, reinterpret_cast<const char*>(&net_res_len), sizeof(net_res_len), 0) == -1) {
+            return false;
+        }
+        // 그 다음 실제 JSON 데이터 전송
+        int ret = sendAll(ssl, json_str.c_str(), res_len, 0);
+        return ret != -1;
     }
 }

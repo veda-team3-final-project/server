@@ -12,19 +12,20 @@ clean:
 server: server.o rtsp_server.o tcp_server.o db_management.o metadata_parser.o
 	$(CXX) server.o rtsp_server.o tcp_server.o db_management.o metadata_parser.o -o server $(LDFLAGS)
 
-server.o: server.cpp
+
+server.o: server.cpp server_bbox.hpp
 	$(CXX) -c server.cpp $(CXXFLAGS)
 
 rtsp_server.o: rtsp_server.cpp
 	$(CXX) -c rtsp_server.cpp $(CXXFLAGS)
 
-tcp_server.o: tcp_server.cpp
+tcp_server.o: tcp_server.cpp server_bbox.hpp
 	$(CXX) -c tcp_server.cpp $(CXXFLAGS)
 
 db_management.o : db_management.cpp
 	$(CXX) -c db_management.cpp -std=c++17
 
-metadata_parser.o: metadata_parser.cpp
+metadata_parser.o: metadata_parser.cpp server_bbox.hpp
 	$(CXX) -c $< -std=c++17
 
 # 메타데이터, 감지 처리 서버
