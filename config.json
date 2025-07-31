@@ -1,0 +1,26 @@
+{
+    "detection": {
+        "dist_threshold": 10.0,
+        "parallelism_threshold": 0.75
+    },
+    "cache": {
+        "frame_cache_size": 15,
+        "history_size": 10
+    },
+    "scale": {
+        "x": 3840.0,
+        "y": 2160.0,
+        "base_x": 960.0,
+        "base_y": 540.0
+    },
+    "board": {
+        "retry_count": 3,
+        "timeout_ms": 500,
+        "ports": {
+            "1": "/dev/ttyAMA0",
+            "2": "/dev/ttyAMA2",
+            "3": "/dev/ttyAMA1",
+            "4": "/dev/ttyAMA3"
+        }
+    }
+}

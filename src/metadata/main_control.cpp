@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <SQLiteCpp/SQLiteCpp.h>
 #include "board_control.h"
+#include "../config_manager.hpp"
 
 using namespace std;
 
@@ -53,21 +54,11 @@ std::string get_uart_port_for_board(int board_id) {
 
 // --- 전역 상태 ---
 recursive_mutex data_mutex;
-const string RTSP_URL = "rtsp://admin:admin123@@192.168.0.137:554/0/onvif/profile2/media.smp";
-const string DB_FILE = "/home/ckdmswo17/server/server_log.db";
 
 // DB에서 로드될 좌표 및 설정값
 vector<tuple<int, Point, int, Point>> base_line_pairs;
 Point dot_center = {0, 0};
 unordered_map<string, Line> rule_lines;
-
-// 설정값
-constexpr float dist_threshold = 10.0f;         // 차량 위치 업데이트 판단을 위한 거리 임계값
-constexpr float parrallelism_threshold = 0.75f; // 차량 이동 방향과 라인 벡터가 평행한지 판단하는 코사인 유사도 임계값 (1에 가까울수록 평행)
-
-// 프레임 캐시 설정
-constexpr size_t FRAME_CACHE_SIZE = 15;
-constexpr int HISTORY_SIZE = 10; // 이동 경로 저장 사이즈
 
 // 객체 이동 경로를 저장하는 구조체
 struct ObjectState {
@@ -191,8 +182,8 @@ bool calculate_intersection(const Point& a1, const Point& a2,
 void load_dots_and_center(SQLite::Database& db) {
     cout << "[INFO] Loading baseLines from DB..." << endl;
 
-    const float scale_x = 3840.0f / 960.0f;
-    const float scale_y = 2160.0f / 540.0f;
+    const float scale_x = g_config.scale_x / g_config.base_x;
+    const float scale_y = g_config.scale_y / g_config.base_y;
     
     //const float scale_x = 1;
     //const float scale_y = 1;
@@ -248,8 +239,8 @@ void load_dots_and_center(SQLite::Database& db) {
 void load_rule_lines(SQLite::Database& db) {
     cout << "[INFO] Loading rule lines from DB..." << endl;
 
-    const float scale_x = 3840.0f / 960.0f;
-    const float scale_y = 2160.0f / 540.0f;
+    const float scale_x = g_config.scale_x / g_config.base_x;
+    const float scale_y = g_config.scale_y / g_config.base_y;
 
     try {
         SQLite::Statement query(db, "SELECT x1, y1, x2, y2, name, mode FROM lines LIMIT 8");
@@ -310,7 +301,7 @@ void capture_screen_and_save(SQLite::Database& db, const string& utc_time_str) {
     string kst_timestamp_str(kst_buffer);
 
     // 2. ffmpeg 캡처 명령어 생성 (이미지를 stdout으로 출력)
-    string cmd = "ffmpeg -i " + RTSP_URL + " -vframes 1 -c:v mjpeg -f image2pipe - 2>/dev/null";
+    string cmd = "ffmpeg -i " + get_rtsp_url() + " -vframes 1 -c:v mjpeg -f image2pipe - 2>/dev/null";
     
     cout << "[INFO] Capturing screen to save into database..." << endl;
 
@@ -419,7 +410,7 @@ void update_vehicle_positions(const string& frame_block, const deque<string>& fr
         seen_vehicles[id] = true;
         auto& state = vehicle_trajectory_history[id];
         state.history.push_back(cog);
-        if (state.history.size() > HISTORY_SIZE) {
+        if (state.history.size() > g_config.history_size) {
             state.history.pop_front();
         }
     }
@@ -521,8 +512,8 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
 
         cout << "[DEBUG] Vehicle " << vehicle_id << ": Old dist to dot_center = " << dist_old << ", New dist = " << dist_new << endl;
 
-        if (dist_new > dist_old - dist_threshold) {
-            cout << "[DEBUG] Step Failed (Vehicle " << vehicle_id << "): Not approaching dot_center enough. Threshold = " << dist_threshold << endl;
+        if (dist_new > dist_old - g_config.dist_threshold) {
+            cout << "[DEBUG] Step Failed (Vehicle " << vehicle_id << "): Not approaching dot_center enough. Threshold = " << g_config.dist_threshold << endl;
             continue;
         }
 
@@ -530,9 +521,9 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
         Point vehicle_vector = {dot_center.x - closest_dot.x, dot_center.y - closest_dot.y};
         float similarity = compute_cosine_similarity(vehicle_vector, line_vector);
 
-        cout << "[DEBUG] Vehicle " << vehicle_id << ": Cosine similarity = " << similarity << ", Threshold = " << parrallelism_threshold << endl;
+        cout << "[DEBUG] Vehicle " << vehicle_id << ": Cosine similarity = " << similarity << ", Threshold = " << g_config.parallelism_threshold << endl;
 
-        if (abs(similarity) >= parrallelism_threshold) {
+        if (abs(similarity) >= g_config.parallelism_threshold) {
             cout << "\n[ALERT] " << vehicle_id << " 차량이 " << human_id << " 인간을 향해 측면에서 접근 중입니다." << endl;
             cout << board_id << " dot matrix를 가동합니다." << endl;
             cout << "(코사인 유사도 : " << similarity << ")\n" << endl;
@@ -562,7 +553,7 @@ float compute_cosine_similarity(const Point& a, const Point& b) {
 void metadata_thread(SQLite::Database& db) {
     cout << "[INFO] FFmpeg 메타데이터 스트림을 시작합니다..." << endl;
 
-    const string cmd = "ffmpeg -i " + RTSP_URL + " -map 0:1 -f data - 2>/dev/null";
+    const string cmd = "ffmpeg -i " + get_rtsp_url() + " -map 0:1 -f data - 2>/dev/null";
 
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
@@ -605,7 +596,7 @@ void metadata_thread(SQLite::Database& db) {
                 // Frame block 처리
                 if (contains_frame_block(block)) {
                     frame_cache.push_back(block);
-                    if (frame_cache.size() > FRAME_CACHE_SIZE) {
+                    if (frame_cache.size() > g_config.frame_cache_size) {
                         frame_cache.pop_front();
                     }
                     update_vehicle_positions(block, frame_cache);
@@ -651,9 +642,16 @@ void metadata_thread(SQLite::Database& db) {
 // --- 메인 진입점 ---
 int main() {
     cout << "[INFO] 메타데이터 모니터링을 시작합니다..." << endl;
+    
+    // 설정 로드
+    if (!load_all_config()) {
+        cerr << "[ERROR] 설정 로드 실패" << endl;
+        return 1;
+    }
+    
     try {
         // DB 파일 열기
-        SQLite::Database db(DB_FILE, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        SQLite::Database db(g_config.db_file, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
         
         // DB 테이블 생성 (없으면)
         create_detections_table(db);

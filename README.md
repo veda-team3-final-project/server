@@ -27,3 +27,21 @@ https://wldh0026.atlassian.net/wiki/x/A4DL
 6. `./server` (TCP, RTSP 서버)를 먼저 실행
 7. `./metadata/control` (메타데이터, 감지 처리 서버)를 새로운 터미널 열어서 실행
 
+### .env 내용
+```
+# 공통 인증 정보
+USERNAME=
+PASSWORD=
+HOST=<IP address>
+
+# API 쿠키 설정
+TRACKID=0842ca6f0d90294ea7de995c40a4aac6
+
+# RTSP 설정
+RTSP_PORT=554
+RTSP_PATH=/0/onvif/profile2/media.smp
+
+# DB 경로
+DB_FILE=
+
+```

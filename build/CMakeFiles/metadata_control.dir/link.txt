@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall CMakeFiles/metadata_control.dir/metadata/main_control.cpp.o CMakeFiles/metadata_control.dir/metadata/board_control.cpp.o -o metadata_control  -lSQLiteCpp -lsqlite3 

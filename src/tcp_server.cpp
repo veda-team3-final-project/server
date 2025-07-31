@@ -1,10 +1,11 @@
 #include "tcp_server.hpp"
+#include "config_manager.hpp"
 
 #include <unordered_map>
 #include <memory>
 #include <random>
 
-#include "server_bbox.hpp"
+
 #include "metadata_parser.hpp"
 #include <thread>
 
@@ -1273,6 +1274,12 @@ void handle_client(int client_socket, SQLite::Database& db,
 
 // --- 메인 TCP 서버 로직 (수정됨) ---
 int tcp_run() {
+  // 설정 로드
+  if (!load_all_config()) {
+    cerr << "[ERROR] 설정 로드 실패" << endl;
+    return -1;
+  }
+
   // OpenSSL 초기화
   if (!init_openssl()) {
     cerr << "OpenSSL 초기화 실패" << endl;

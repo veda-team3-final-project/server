@@ -2,7 +2,7 @@
 #include <iostream>
 #include <regex>
 #include <cstdio>
-#include "server_bbox.hpp" // Include the new server-side BBox definition
+#include "config_manager.hpp"
 
 // tcp_server.hpp에서 선언된 update_bbox_buffer 함수 사용
 void update_bbox_buffer(const std::vector<ServerBBox>& new_bboxes);
@@ -27,9 +27,16 @@ void parse_metadata() {
         return;
     }
 
-    const string cmd =
-        "ffmpeg -i rtsp://admin:admin123@@192.168.0.137:554/0/onvif/profile2/media.smp "
-        "-map 0:1 -f data -";
+    // 설정 로드 (이미 로드되어 있으면 무시됨)
+    if (!load_all_config()) {
+        cerr << "[Metadata] 설정 로드 실패" << endl;
+        return;
+    }
+
+    // 설정에서 RTSP URL 가져오기
+    string rtsp_url = get_rtsp_url();
+    string cmd = "ffmpeg -i " + rtsp_url + " -map 0:1 -f data -";
+    
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
         cerr << "[Metadata] ffmpeg 파이프 실행 실패" << endl;
