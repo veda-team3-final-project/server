@@ -7,17 +7,19 @@
 #include <vector>
 #include <cstring>
 
-// --- 프로토콜 정의 ---
 #define DLE  0x10
 #define STX  0x02
 #define ETX  0x03
 #define CMD_SYNC_TIME 0x03
+#define NUM_BOARDS 4
 
-// 보드 ID: 1~4
-#define BOARD_ID 2
-#define DEVICE "/dev/ttyAMA2"
+const char* SERIAL_PORTS[NUM_BOARDS] = {
+    "/dev/ttyAMA0",  // ID 1
+    "/dev/ttyAMA2",  // ID 2
+    "/dev/ttyAMA1",  // ID 3
+    "/dev/ttyAMA3"   // ID 4
+};
 
-// --- CRC 계산 (STM32 방식과 일치) ---
 uint8_t reverse(uint8_t val, int bits) {
     uint8_t res = 0;
     for (int i = 0; i < bits; ++i)
@@ -42,11 +44,10 @@ uint16_t crc16(const std::vector<uint8_t>& data) {
     return reverse16(crc, 16) & 0xFFFF;
 }
 
-// --- UART 초기화 ---
 int open_serial(const char* device) {
     int fd = open(device, O_RDWR | O_NOCTTY);
     if (fd < 0) {
-        perror("open");
+        perror(device);
         exit(1);
     }
 
@@ -69,24 +70,20 @@ int open_serial(const char* device) {
     return fd;
 }
 
-// --- 프레임 인코딩 ---
 std::vector<uint8_t> encode_frame(uint8_t cmd, int board_id, const std::vector<uint8_t>& extra_data) {
     uint8_t dst_mask = 1 << (board_id - 1);
-
     std::vector<uint8_t> payload = { dst_mask, cmd };
     payload.insert(payload.end(), extra_data.begin(), extra_data.end());
 
-    // CRC 대상은 payload 전체
     uint16_t crc = crc16(payload);
     payload.push_back((crc >> 8) & 0xFF);
     payload.push_back(crc & 0xFF);
 
-    // 바이트 스터핑 포함된 전체 프레임 구성
     std::vector<uint8_t> frame = { DLE, STX };
     for (uint8_t b : payload) {
         if (b == DLE) {
             frame.push_back(DLE);
-            frame.push_back(DLE);  // Byte stuffing
+            frame.push_back(DLE);
         } else {
             frame.push_back(b);
         }
@@ -97,7 +94,10 @@ std::vector<uint8_t> encode_frame(uint8_t cmd, int board_id, const std::vector<u
 }
 
 int main() {
-    int fd = open_serial(DEVICE);
+    int fds[NUM_BOARDS];
+    for (int i = 0; i < NUM_BOARDS; ++i) {
+        fds[i] = open_serial(SERIAL_PORTS[i]);
+    }
 
     while (true) {
         time_t now = time(nullptr);
@@ -121,21 +121,27 @@ int main() {
             static_cast<uint8_t>(is_pm ? 1 : 0)
         };
 
-        auto frame = encode_frame(CMD_SYNC_TIME, BOARD_ID, time_payload);
-        write(fd, frame.data(), frame.size());
-        tcdrain(fd); // 송신 완료까지 대기
+        for (int board_id = 1; board_id <= NUM_BOARDS; ++board_id) {
+            auto frame = encode_frame(CMD_SYNC_TIME, board_id, time_payload);
+            write(fds[board_id - 1], frame.data(), frame.size());
+            tcdrain(fds[board_id - 1]);
 
-        std::cout << "[SENT] ";
-        for (uint8_t b : frame)
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << int(b) << ' ';
-        std::cout << std::endl;
+            std::cout << "[SENT to Board " << board_id << "] ";
+            for (uint8_t b : frame)
+                std::cout << std::hex << std::setw(2) << std::setfill('0') << int(b) << ' ';
+            std::cout << std::endl;
+        }
 
-        sleep(5);  // 5초마다 전송
+        sleep(5);
     }
 
-    close(fd);
+    for (int i = 0; i < NUM_BOARDS; ++i) {
+        close(fds[i]);
+    }
+
     return 0;
 }
+
 
 /* g++ test1.cpp -o send_time --std=c++17*/
 

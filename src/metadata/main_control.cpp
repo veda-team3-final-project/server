@@ -11,6 +11,7 @@
 #include <sstream>
 #include <deque>
 #include <limits>
+#include <thread>
 
 #include <fcntl.h>
 #include <termios.h>
@@ -82,6 +83,7 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
 float compute_cosine_similarity(const Point& a, const Point& b);
 void capture_screen_and_save(SQLite::Database& db, const string& utc_time_str);
 void control_board(int board_id, uint8_t cmd);
+void control_board_async(int board_id, const string& utc_time_str);
 
 
 // --- 보드제어 관련 함수 ---
@@ -106,6 +108,37 @@ void control_board(int board_id, uint8_t cmd) {
     } else {
         cerr << "[ERROR] Command 0x" << hex << int(cmd) << " failed for board " << board_id << endl;
     }
+}
+
+// 비동기 보드 제어 함수 (별도 스레드에서 실행)
+void control_board_async(int board_id, const string& utc_time_str) {
+    cout << "[INFO] Starting async board control for board " << board_id << endl;
+    
+    // 0x01 명령어 실행 (LCD ON)
+    control_board(board_id, 0x01);
+    
+    // dot matrix 동작과 동시에 화면 캡처 시작
+    std::thread capture_thread([utc_time_str]() {
+        try {
+            // 잠시 대기 후 캡처 (dot matrix가 켜진 상태에서 캡처)
+            sleep(1); // 1초 후 캡처하여 dot matrix 동작 상태를 기록
+            SQLite::Database db(DB_FILE, SQLite::OPEN_READWRITE);
+            capture_screen_and_save(db, utc_time_str);
+        } catch (const std::exception& e) {
+            cerr << "[ERROR] Failed to capture screen in async thread: " << e.what() << endl;
+        }
+    });
+    
+    // 캡처 스레드를 detach하여 독립적으로 실행
+    capture_thread.detach();
+    
+    // 5초 대기 (이 스레드만 블로킹됨)
+    sleep(5);
+    
+    // 0x02 명령어 실행 (LCD OFF)
+    control_board(board_id, 0x02);
+    
+    cout << "[INFO] Async board control completed for board " << board_id << endl;
 }
 
 
@@ -504,13 +537,9 @@ void analyze_risk_and_alert(SQLite::Database& db, int human_id, const string& ru
             cout << board_id << " dot matrix를 가동합니다." << endl;
             cout << "(코사인 유사도 : " << similarity << ")\n" << endl;
             
-            // 7. 보드 제어
-            control_board(board_id, 0x01); // 0x01 명령어   
-            sleep(5);
-            control_board(board_id, 0x02); // 0x02 명령어
-
-            // 화면 캡처 및 DB 저장
-            capture_screen_and_save(db, utc_time_str);
+            // 7. 보드 제어를 별도 스레드에서 비동기 실행
+            std::thread board_control_thread(control_board_async, board_id, utc_time_str);
+            board_control_thread.detach(); // 스레드를 독립적으로 실행
         } else {
             cout << "[DEBUG] Step Failed (Vehicle " << vehicle_id << "): Cosine similarity not high enough." << endl;
         }
