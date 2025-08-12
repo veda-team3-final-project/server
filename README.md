@@ -2,7 +2,7 @@
 
 ## 요구사항
 
-- Hanwha Vision PNO-A9081R
+- Hanwha Vision PNO-A9081R 
 - Raspberry Pi 4B 8GB(ARM64) / Debian Bookworm OS
 
 에서 정상적으로 컴파일 및 실행됩니다. 
